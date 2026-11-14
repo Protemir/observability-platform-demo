@@ -112,7 +112,10 @@ const overview = dashboard({
     {
       type: 'table', title: 'Активные оповещения', datasource: PROM, gridPos: { x: 14, y: 4, w: 10, h: 7 },
       targets: refs([{ expr: 'ALERTS{alertstate="firing", alertname!="Watchdog"}', instant: true, format: 'table' }]),
-      transformations: [{ id: 'organize', options: { excludeByName: { Time: true, Value: true, __name__: true, alertstate: true, job: true, instance: true }, indexByName: { severity: 0, alertname: 1, service: 2 }, renameByName: { severity: 'Важность', alertname: 'Оповещение', service: 'Сервис' } } }],
+      transformations: [
+        { id: 'filterFieldsByName', options: { include: { names: ['severity', 'alertname', 'service', 'span_name'] } } },
+        { id: 'organize', options: { indexByName: { severity: 0, alertname: 1, service: 2, span_name: 3 }, renameByName: { severity: 'Важность', alertname: 'Оповещение', service: 'Сервис', span_name: 'Операция' } } },
+      ],
       fieldConfig: { defaults: { custom: { cellOptions: { type: 'auto' } } }, overrides: [{ matcher: { id: 'byName', options: 'Важность' }, properties: [{ id: 'custom.cellOptions', value: { type: 'color-background' } }, { id: 'mappings', value: [{ type: 'value', options: { critical: { color: 'red', index: 0 }, warning: { color: 'orange', index: 1 } } }] }] }] },
       options: { showHeader: true, cellHeight: 'sm' },
     },

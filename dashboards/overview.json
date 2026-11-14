@@ -496,25 +496,32 @@
       ],
       "transformations": [
         {
+          "id": "filterFieldsByName",
+          "options": {
+            "include": {
+              "names": [
+                "severity",
+                "alertname",
+                "service",
+                "span_name"
+              ]
+            }
+          }
+        },
+        {
           "id": "organize",
           "options": {
-            "excludeByName": {
-              "Time": true,
-              "Value": true,
-              "__name__": true,
-              "alertstate": true,
-              "job": true,
-              "instance": true
-            },
             "indexByName": {
               "severity": 0,
               "alertname": 1,
-              "service": 2
+              "service": 2,
+              "span_name": 3
             },
             "renameByName": {
               "severity": "Важность",
               "alertname": "Оповещение",
-              "service": "Сервис"
+              "service": "Сервис",
+              "span_name": "Операция"
             }
           }
         }
