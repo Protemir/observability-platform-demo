@@ -1,0 +1,64 @@
+# Platform layer for the OpenTelemetry Demo collector.
+# Loaded on top of the demo's own otelcol-config.yml (the collector merges
+# config files, but REPLACES arrays, so pipeline exporters are listed in full).
+#
+# Signals:
+#   traces  -> Tempo (OTLP gRPC) + span_metrics connector (RED metrics with exemplars)
+#   metrics -> Prometheus native OTLP endpoint
+#   logs    -> Loki native OTLP endpoint (trace_id/span_id kept as structured metadata)
+
+connectors:
+  span_metrics:
+    # Default flush is 60s; 15s keeps alert latency well under the 5 minute target.
+    metrics_flush_interval: 15s
+    histogram:
+      explicit:
+        buckets: [5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1s, 2s, 5s, 10s]
+    exemplars:
+      enabled: true
+    dimensions:
+      - name: rpc.service
+      - name: http.route
+    # Bounded label cardinality: anything above this collapses into an overflow series.
+    aggregation_cardinality_limit: 5000
+
+processors:
+  # Low-value noise that would only cost storage.
+  filter/drop_noise:
+    error_mode: ignore
+    traces:
+      span:
+        - 'attributes["http.route"] == "/health"'
+        - 'attributes["url.path"] == "/health"'
+
+exporters:
+  otlp_grpc/tempo:
+    endpoint: "${env:TEMPO_OTLP_GRPC_ENDPOINT}"
+    tls:
+      insecure: true
+    sending_queue:
+      batch:
+  otlp_http/prometheus:
+    endpoint: "${env:PROMETHEUS_OTLP_ENDPOINT}"
+    tls:
+      insecure: true
+    sending_queue:
+      batch:
+  otlp_http/loki:
+    endpoint: "${env:LOKI_OTLP_ENDPOINT}"
+    tls:
+      insecure: true
+    sending_queue:
+      batch:
+
+service:
+  pipelines:
+    traces:
+      processors: [resource_detection, memory_limiter, filter/drop_noise, transform/sanitize_spans, gen_ai_normalizer, transform/redact_sensitive_data, redaction]
+      exporters: [otlp_grpc/tempo, span_metrics]
+    metrics:
+      exporters: [otlp_http/prometheus]
+    logs:
+      exporters: [otlp_http/loki]
+    profiles:
+      exporters: [debug]

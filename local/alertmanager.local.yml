@@ -1,0 +1,61 @@
+# Local stand variant of alertmanager/alertmanager.yaml.
+# Same routing, but delivery goes to local stand-ins instead of the outside world:
+#   SMTP     -> mailpit (UI http://localhost:8025)
+#   Telegram -> tg-mock, which speaks the Bot API sendMessage call (UI http://localhost:8088)
+
+global:
+  resolve_timeout: 5m
+  smtp_smarthost: "mailpit:1025"
+  smtp_from: "alerts@stand.local"
+  smtp_require_tls: false
+
+templates:
+  - /etc/alertmanager/templates/*.tmpl
+
+route:
+  receiver: oncall
+  group_by: [alertname, service]
+  group_wait: 30s
+  group_interval: 2m
+  repeat_interval: 4h
+  routes:
+    - matchers: [alertname="Watchdog"]
+      receiver: blackhole
+    - matchers: [severity="info"]
+      receiver: email-only
+
+inhibit_rules:
+  - source_matchers: [severity="critical"]
+    target_matchers: [severity="warning"]
+    equal: [service]
+  - source_matchers: [alertname="ServiceDown"]
+    target_matchers: [alertname=~"ServiceHighErrorRate|ServiceHighLatency|DependencyCallErrors"]
+    equal: [service]
+  # The caller fails because a dependency fails: the dependency alert is the useful one.
+  - source_matchers: [alertname="DependencyCallErrors"]
+    target_matchers: [alertname="ServiceHighErrorRate"]
+    equal: [service]
+
+receivers:
+  - name: blackhole
+  - name: oncall
+    email_configs:
+      - to: "oncall@stand.local"
+        send_resolved: true
+        headers:
+          Subject: '{{ template "platform.subject" . }}'
+        html: '{{ template "platform.email.html" . }}'
+    telegram_configs:
+      - api_url: http://tg-mock:8088
+        bot_token_file: /etc/alertmanager/secrets/telegram-bot-token
+        chat_id: -1001234567890
+        parse_mode: HTML
+        message: '{{ template "platform.telegram" . }}'
+        send_resolved: true
+  - name: email-only
+    email_configs:
+      - to: "oncall@stand.local"
+        send_resolved: true
+        headers:
+          Subject: '{{ template "platform.subject" . }}'
+        html: '{{ template "platform.email.html" . }}'

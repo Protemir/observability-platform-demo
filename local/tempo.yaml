@@ -1,0 +1,54 @@
+# Tempo 3.1.1, monolithic. Same settings as deploy/helm/values/tempo.yaml
+# (this is the config that chart renders, with local addresses).
+stream_over_http_enabled: true
+multitenancy_enabled: false
+usage_report:
+  reporting_enabled: false
+
+server:
+  http_listen_port: 3200
+  log_level: warn
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+
+backend_scheduler:
+  provider:
+    compaction:
+      compaction:
+        block_retention: 168h   # 7 days, ТЗ 4.2
+backend_worker:
+  compaction:
+    block_retention: 168h
+
+storage:
+  trace:
+    backend: local
+    local:
+      path: /var/tempo/traces
+    wal:
+      path: /var/tempo/wal
+
+overrides:
+  defaults:
+    metrics_generator:
+      processors: [service-graphs, local-blocks]
+
+metrics_generator:
+  processor:
+    service_graphs:
+      enable_client_server_prefix: true
+  registry:
+    external_labels:
+      source: tempo
+  storage:
+    path: /var/tempo/generator/wal
+    remote_write:
+      - url: http://prometheus:9090/api/v1/write
+        send_exemplars: true

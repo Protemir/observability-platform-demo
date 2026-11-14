@@ -1,0 +1,27 @@
+{{ define "platform.subject" -}}
+[{{ .Status | toUpper }}{{ if eq .Status "firing" }}:{{ .Alerts.Firing | len }}{{ end }}] {{ .CommonLabels.alertname }}{{ if .CommonLabels.service }} — {{ .CommonLabels.service }}{{ end }}
+{{- end }}
+
+{{ define "platform.telegram" -}}
+{{ if eq .Status "firing" }}🔴{{ else }}✅{{ end }} <b>{{ .CommonLabels.alertname }}</b>{{ if .CommonLabels.service }} · <code>{{ .CommonLabels.service }}</code>{{ end }} · {{ .CommonLabels.severity }}
+{{ range .Alerts -}}
+{{ .Annotations.summary }}
+{{ if .Annotations.description }}{{ .Annotations.description }}
+{{ end }}{{ end -}}
+{{ with (index .Alerts 0).Annotations -}}
+{{ if .dashboard }}📊 <a href="{{ template "platform.grafana_url" }}{{ .dashboard }}">Панель</a>  {{ end }}{{ if .runbook_url }}📖 <a href="{{ .runbook_url }}">Runbook</a>{{ end }}
+{{- end }}
+{{- end }}
+
+{{ define "platform.email.html" -}}
+<h3>{{ template "platform.subject" . }}</h3>
+<table cellpadding="4" style="border-collapse:collapse;font-family:sans-serif;font-size:14px">
+{{ range .Alerts -}}
+<tr><td colspan="2" style="border-top:1px solid #ccc"><b>{{ .Annotations.summary }}</b></td></tr>
+{{ if .Annotations.description }}<tr><td colspan="2">{{ .Annotations.description }}</td></tr>{{ end }}
+<tr><td>Начало</td><td>{{ .StartsAt.Format "2006-01-02 15:04:05 MST" }}</td></tr>
+{{ if .Annotations.dashboard }}<tr><td>Панель</td><td><a href="{{ template "platform.grafana_url" }}{{ .Annotations.dashboard }}">открыть в Grafana</a></td></tr>{{ end }}
+{{ if .Annotations.runbook_url }}<tr><td>Runbook</td><td><a href="{{ .Annotations.runbook_url }}">{{ .Annotations.runbook_url }}</a></td></tr>{{ end }}
+{{ end -}}
+</table>
+{{- end }}

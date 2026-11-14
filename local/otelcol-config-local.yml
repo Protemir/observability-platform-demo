@@ -1,0 +1,6 @@
+# Local Docker stand only: extra container metrics used by the restart alert.
+receivers:
+  docker_stats:
+    metrics:
+      container.restarts:
+        enabled: true

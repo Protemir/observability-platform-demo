@@ -1,0 +1,20 @@
+# Local Docker stand: container resources from the collector's docker_stats receiver,
+# normalised to the same series as recording.k8s.yaml, so alerts.yaml is shared.
+# Container names in the demo compose file equal service names.
+groups:
+  - name: resources.compose.recording
+    interval: 15s
+    rules:
+      - record: service:container_memory_bytes
+        expr: max by (service) (label_replace(container_memory_usage_total_bytes, "service", "$1", "container_name", "(.*)"))
+      - record: service:container_memory_limit_bytes
+        expr: max by (service) (label_replace(container_memory_usage_limit_bytes, "service", "$1", "container_name", "(.*)"))
+      - record: service:container_cpu_cores:rate2m
+        expr: |
+          sum by (service) (label_replace(
+            rate(container_cpu_usage_nanoseconds_total[2m]) / 1e9,
+            "service", "$1", "container_name", "(.*)"))
+      - record: service:container_restarts:increase10m
+        expr: sum by (service) (label_replace(increase(container_restarts_total[10m]), "service", "$1", "container_name", "(.*)"))
+      - record: service:container_memory_bytes:min1h
+        expr: min_over_time(service:container_memory_bytes[1h])

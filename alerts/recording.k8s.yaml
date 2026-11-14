@@ -1,0 +1,60 @@
+# Kubernetes: container resources from cAdvisor + kube-state-metrics
+# (both come with kube-prometheus-stack), normalised to the series the alerts use.
+# The demo chart names each container after its component (ad, cart, checkout ...),
+# which matches service.name in the telemetry.
+groups:
+  - name: resources.k8s.recording
+    interval: 15s
+    rules:
+      - record: service:container_memory_bytes
+        expr: |
+          max by (service) (label_replace(
+            container_memory_working_set_bytes{namespace="otel-demo", container!="", container!="POD"},
+            "service", "$1", "container", "(.*)"))
+      - record: service:container_memory_limit_bytes
+        expr: |
+          max by (service) (label_replace(
+            kube_pod_container_resource_limits{namespace="otel-demo", resource="memory"},
+            "service", "$1", "container", "(.*)"))
+      - record: service:container_cpu_cores:rate2m
+        expr: |
+          sum by (service) (label_replace(
+            rate(container_cpu_usage_seconds_total{namespace="otel-demo", container!="", container!="POD"}[2m]),
+            "service", "$1", "container", "(.*)"))
+      - record: service:container_cpu_limit_cores
+        expr: |
+          max by (service) (label_replace(
+            kube_pod_container_resource_limits{namespace="otel-demo", resource="cpu"},
+            "service", "$1", "container", "(.*)"))
+      - record: service:container_restarts:increase10m
+        expr: |
+          sum by (service) (label_replace(
+            increase(kube_pod_container_status_restarts_total{namespace="otel-demo"}[10m]),
+            "service", "$1", "container", "(.*)"))
+      - record: service:container_memory_bytes:min1h
+        expr: min_over_time(service:container_memory_bytes[1h])
+
+  - name: platform.k8s
+    rules:
+      - alert: DeploymentUnavailable
+        expr: kube_deployment_status_replicas_available{namespace="otel-demo"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: '{{ $labels.deployment }}'
+        annotations:
+          summary: '{{ $labels.deployment }}: нет ни одной готовой реплики'
+          description: Под не стартует или не проходит пробу готовности.
+          runbook_url: https://github.com/Protemir/observability-platform-demo/blob/main/runbooks/DeploymentUnavailable.md
+          dashboard: /d/platform-infra/infrastructure
+      - alert: NodeMemoryPressure
+        expr: (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) > 0.9
+        for: 5m
+        labels:
+          severity: warning
+          service: node
+        annotations:
+          summary: 'Узел {{ $labels.instance }}: занято {{ $value | humanizePercentage }} памяти'
+          description: Поды на узле скоро начнут вытесняться.
+          runbook_url: https://github.com/Protemir/observability-platform-demo/blob/main/runbooks/NodeMemoryPressure.md
+          dashboard: /d/platform-infra/infrastructure

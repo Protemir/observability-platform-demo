@@ -1,0 +1,46 @@
+# grafana-community/tempo 3.2.1 (Tempo 3.1.1), monolithic. Traces for 7 days.
+tempo:
+  retention: 168h
+  streamOverHttpEnabled: true
+  reportingEnabled: false
+  resources:
+    requests: { cpu: 200m, memory: 512Mi }
+    limits: { memory: 2Gi }
+  storage:
+    trace:
+      backend: local
+      local:
+        path: /var/tempo/traces
+      wal:
+        path: /var/tempo/wal
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: "0.0.0.0:4317"
+        http:
+          endpoint: "0.0.0.0:4318"
+  # Service graph (map of services in Grafana) is computed from traces and
+  # written to Prometheus; span RED metrics come from the collector instead.
+  metricsGenerator:
+    enabled: true
+    remoteWriteUrl: http://kps-prometheus.observability:9090/api/v1/write
+    storage:
+      path: /var/tempo/generator/wal
+      remote_write:
+        - url: http://kps-prometheus.observability:9090/api/v1/write
+          send_exemplars: true
+    registry:
+      external_labels:
+        source: tempo
+    processor:
+      service_graphs:
+        enable_client_server_prefix: true
+  overrides:
+    defaults:
+      metrics_generator:
+        processors: [service-graphs, local-blocks]
+
+persistence:
+  enabled: true
+  size: 20Gi

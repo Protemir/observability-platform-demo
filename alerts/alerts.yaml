@@ -1,0 +1,233 @@
+# Alert rules of the platform. Every rule has:
+#   labels.severity  critical | warning | info   (routing in alertmanager/alertmanager.yaml)
+#   labels.service   the service the on-call engineer should look at first
+#   annotations.runbook_url / dashboard  -> runbooks/<alertname>.md, Grafana panel
+# Rules work on recorded series (recording.*.yaml), so the same file is used on
+# Kubernetes and on the local Docker stand.
+groups:
+  - name: platform.app
+    rules:
+      - alert: ServiceHighErrorRate
+        expr: |
+          service:error_ratio:rate2m > 0.05
+          and on (service_name) service:requests:rate2m > 0.05
+        for: 1m
+        labels:
+          severity: critical
+          service: '{{ $labels.service_name }}'
+        annotations:
+          summary: '{{ $labels.service_name }}: {{ $value | humanizePercentage }} запросов с ошибкой'
+          description: Доля ошибок входящих запросов выше 5 % дольше минуты.
+          runbook_url: https://github.com/Protemir/observability-platform-demo/blob/main/runbooks/ServiceHighErrorRate.md
+          dashboard: /d/platform-service/service?var-service={{ $labels.service_name }}
+
+      - alert: OperationErrors
+        expr: |
+          operation:error_ratio:rate2m > 0.05
+          and on (service_name, span_name) operation:requests:rate2m > 0.02
+        for: 2m
+        labels:
+          severity: warning
+          service: '{{ $labels.service_name }}'
+        annotations:
+          summary: '{{ $labels.service_name }} / {{ $labels.span_name }}: {{ $value | humanizePercentage }} ошибок'
+          description: Ошибки в одной операции сервиса (например, один товар или один маршрут).
+          runbook_url: https://github.com/Protemir/observability-platform-demo/blob/main/runbooks/OperationErrors.md
+          dashboard: /d/platform-service/service?var-service={{ $labels.service_name }}
+
+      - alert: DependencyCallErrors
+        expr: |
+          dependency:error_ratio:rate2m > 0.20
+          and on (service_name, span_name) dependency:requests:rate2m > 0.02
+        for: 1m
+        labels:
+          severity: critical
+          service: '{{ $labels.service_name }}'
+        annotations:
+          summary: '{{ $labels.service_name }} → {{ $labels.span_name }}: {{ $value | humanizePercentage }} вызовов падает'
+          description: Сервис не может вызвать зависимость. Источник — вызываемый сервис или сеть до него.
+          runbook_url: https://github.com/Protemir/observability-platform-demo/blob/main/runbooks/DependencyCallErrors.md
+          dashboard: /d/platform-overview/overview
+
+      - alert: ServiceHighLatency
+        expr: |
+          (
+            operation:latency_ms:p95_2m > 3 * operation:latency_ms:p95_1h
+            and operation:latency_ms:p95_2m > 500
+          )
+          and on (service_name, span_name) operation:requests:rate2m > 0.02
+        for: 2m
+        labels:
+          severity: warning
+          service: '{{ $labels.service_name }}'
+        annotations:
+          summary: '{{ $labels.service_name }} / {{ $labels.span_name }}: p95 {{ $value | humanize }} мс'
+          description: p95 задержки втрое выше обычного за последний час и больше 500 мс.
+          runbook_url: https://github.com/Protemir/observability-platform-demo/blob/main/runbooks/ServiceHighLatency.md
+          dashboard: /d/platform-service/service?var-service={{ $labels.service_name }}
+
+      - alert: ServiceDown
+        expr: |
+          (sum by (service_name) (rate(traces_span_metrics_calls_total[15m] offset 5m)) > 0)
+          unless on (service_name)
+          (sum by (service_name) (rate(traces_span_metrics_calls_total[2m])) > 0)
+        for: 1m
+        labels:
+          severity: critical
+          service: '{{ $labels.service_name }}'
+        annotations:
+          summary: '{{ $labels.service_name }} перестал обрабатывать запросы'
+          description: 15 минут назад трафик был, последние 2 минуты нет ни одного спана.
+          runbook_url: https://github.com/Protemir/observability-platform-demo/blob/main/runbooks/ServiceDown.md
+          dashboard: /d/platform-overview/overview
+
+  - name: platform.resources
+    rules:
+      - alert: MemoryLeak
+        expr: |
+          (
+            predict_linear(service:container_memory_bytes[10m], 3600) > service:container_memory_limit_bytes
+            and deriv(service:container_memory_bytes[10m]) > 100 * 1024
+          )
+          or
+          (
+            deriv(service:container_memory_bytes[5m]) > 512 * 1024
+            and service:container_memory_bytes > 2 * service:container_memory_bytes:min1h
+          )
+        for: 2m
+        labels:
+          severity: warning
+          service: '{{ $labels.service }}'
+        annotations:
+          summary: '{{ $labels.service }}: память растёт без остановки'
+          description: По текущему наклону контейнер упрётся в лимит памяти в течение часа, или память уже удвоилась от минимума за час.
+          runbook_url: https://github.com/Protemir/observability-platform-demo/blob/main/runbooks/MemoryLeak.md
+          dashboard: /d/platform-service/service?var-service={{ $labels.service }}
+
+      - alert: MemoryNearLimit
+        expr: service:container_memory_bytes / service:container_memory_limit_bytes > 0.9
+        for: 2m
+        labels:
+          severity: critical
+          service: '{{ $labels.service }}'
+        annotations:
+          summary: '{{ $labels.service }}: занято {{ $value | humanizePercentage }} лимита памяти'
+          description: Скоро OOM и перезапуск контейнера.
+          runbook_url: https://github.com/Protemir/observability-platform-demo/blob/main/runbooks/MemoryNearLimit.md
+          dashboard: /d/platform-infra/infrastructure
+
+      - alert: HighCpu
+        expr: |
+          service:container_cpu_cores:rate2m > 0.9 * service:container_cpu_limit_cores
+          or (service:container_cpu_cores:rate2m > 1 unless on (service) service:container_cpu_limit_cores)
+        for: 2m
+        labels:
+          severity: warning
+          service: '{{ $labels.service }}'
+        annotations:
+          summary: '{{ $labels.service }}: CPU {{ $value | humanize }} ядра'
+          description: Процессор сервиса загружен дольше 2 минут.
+          runbook_url: https://github.com/Protemir/observability-platform-demo/blob/main/runbooks/HighCpu.md
+          dashboard: /d/platform-infra/infrastructure
+
+      - alert: ContainerRestarting
+        expr: service:container_restarts:increase10m > 0
+        labels:
+          severity: warning
+          service: '{{ $labels.service }}'
+        annotations:
+          summary: '{{ $labels.service }}: {{ $value | humanize }} перезапуск(ов) за 10 минут'
+          description: Контейнер перезапускается (OOM, падение, проба живости).
+          runbook_url: https://github.com/Protemir/observability-platform-demo/blob/main/runbooks/ContainerRestarting.md
+          dashboard: /d/platform-infra/infrastructure
+
+  - name: platform.queues
+    rules:
+      - alert: KafkaConsumerLagHigh
+        expr: max by (group, topic) (kafka_consumer_group_lag_sum) > 500
+        for: 2m
+        labels:
+          severity: warning
+          service: '{{ $labels.group }}'
+        annotations:
+          summary: 'Kafka: группа {{ $labels.group }} отстаёт на {{ $value | humanize }} сообщений ({{ $labels.topic }})'
+          description: Потребитель не успевает за записью в очередь.
+          runbook_url: https://github.com/Protemir/observability-platform-demo/blob/main/runbooks/KafkaConsumerLagHigh.md
+          dashboard: /d/platform-queues/queues
+
+      - alert: KafkaConsumerStalled
+        expr: |
+          max by (group, topic) (kafka_consumer_group_lag_sum) > 0
+          and on (group, topic) sum by (group, topic) (rate(kafka_consumer_group_offset_sum[3m])) == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: '{{ $labels.group }}'
+        annotations:
+          summary: 'Kafka: группа {{ $labels.group }} не читает {{ $labels.topic }}'
+          description: Отставание есть, а смещение потребителя не двигается 5 минут.
+          runbook_url: https://github.com/Protemir/observability-platform-demo/blob/main/runbooks/KafkaConsumerStalled.md
+          dashboard: /d/platform-queues/queues
+
+  - name: platform.slo
+    rules:
+      # Multi-window, multi-burn-rate (Google SRE Workbook, ch. 5). SLO 99 % -> budget 1 %.
+      - alert: CheckoutSloFastBurn
+        expr: |
+          slo:checkout_errors:ratio_rate1h > (14.4 * 0.01)
+          and slo:checkout_errors:ratio_rate5m > (14.4 * 0.01)
+        labels:
+          severity: critical
+          service: checkout
+        annotations:
+          summary: 'Оформление заказа: бюджет ошибок сгорает в 14 раз быстрее нормы'
+          description: 'Ошибок за час {{ $value | humanizePercentage }} при SLO 99 %. Бюджет на 30 дней уйдёт за 2 дня.'
+          runbook_url: https://github.com/Protemir/observability-platform-demo/blob/main/runbooks/CheckoutSloFastBurn.md
+          dashboard: /d/platform-slo/slo-checkout
+      - alert: CheckoutSloSlowBurn
+        expr: |
+          slo:checkout_errors:ratio_rate6h > (6 * 0.01)
+          and slo:checkout_errors:ratio_rate30m > (6 * 0.01)
+        labels:
+          severity: warning
+          service: checkout
+        annotations:
+          summary: 'Оформление заказа: бюджет ошибок сгорает в 6 раз быстрее нормы'
+          description: 'Ошибок за 6 часов {{ $value | humanizePercentage }} при SLO 99 %.'
+          runbook_url: https://github.com/Protemir/observability-platform-demo/blob/main/runbooks/CheckoutSloSlowBurn.md
+          dashboard: /d/platform-slo/slo-checkout
+      - alert: CheckoutLatencySloBurn
+        expr: |
+          slo:checkout_slow:ratio_rate1h > (14.4 * 0.05)
+          and slo:checkout_slow:ratio_rate5m > (14.4 * 0.05)
+        labels:
+          severity: warning
+          service: checkout
+        annotations:
+          summary: 'Оформление заказа: больше {{ $value | humanizePercentage }} заказов дольше 2 с'
+          description: SLO задержки — 95 % заказов быстрее 2 секунд.
+          runbook_url: https://github.com/Protemir/observability-platform-demo/blob/main/runbooks/CheckoutLatencySloBurn.md
+          dashboard: /d/platform-slo/slo-checkout
+
+  - name: platform.self
+    rules:
+      - alert: TelemetryPipelineDown
+        expr: absent_over_time(traces_span_metrics_calls_total[3m])
+        for: 2m
+        labels:
+          severity: critical
+          service: otel-collector
+        annotations:
+          summary: В Prometheus не приходят span-метрики
+          description: Коллектор не работает или не может отправить данные. Остальные оповещения сейчас слепы.
+          runbook_url: https://github.com/Protemir/observability-platform-demo/blob/main/runbooks/TelemetryPipelineDown.md
+          dashboard: /d/platform-overview/overview
+      - alert: Watchdog
+        expr: vector(1)
+        labels:
+          severity: none
+          service: platform
+        annotations:
+          summary: Цепочка оповещений жива (dead man's switch)
+          description: Срабатывает всегда. Если внешний heartbeat перестал его получать, сломан сам мониторинг.
+          runbook_url: https://github.com/Protemir/observability-platform-demo/blob/main/runbooks/Watchdog.md

@@ -1,0 +1,144 @@
+# promtool test rules alerts/tests/alerts_test.yaml
+# Synthetic span metrics for typical failure scenarios; checks that the right alert
+# fires, on the right service, within the time the acceptance test allows (5 min).
+rule_files:
+  - ../recording.common.yaml
+  - ../recording.compose.yaml
+  - ../alerts.yaml
+
+evaluation_interval: 15s
+
+tests:
+  # paymentFailure: 1 of 6 charges fails -> ServiceHighErrorRate on payment within 4 minutes.
+  - name: payment errors
+    interval: 15s
+    input_series:
+      - series: 'traces_span_metrics_calls_total{service_name="payment", span_name="oteldemo.PaymentService/Charge", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_UNSET"}'
+        values: '0+15x40'
+      - series: 'traces_span_metrics_calls_total{service_name="payment", span_name="oteldemo.PaymentService/Charge", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}'
+        values: '0x16 0+3x24'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: ServiceHighErrorRate
+        exp_alerts: []
+      - eval_time: 8m
+        alertname: ServiceHighErrorRate
+        exp_alerts:
+          - exp_labels: { alertname: ServiceHighErrorRate, severity: critical, service: payment, service_name: payment }
+            exp_annotations:
+              summary: 'payment: 16.67% запросов с ошибкой'
+              description: Доля ошибок входящих запросов выше 5 % дольше минуты.
+              runbook_url: https://github.com/Protemir/observability-platform-demo/blob/main/runbooks/ServiceHighErrorRate.md
+              dashboard: /d/platform-service/service?var-service=payment
+
+  # paymentUnreachable: payment emits nothing, checkout's calls to it fail.
+  - name: dependency unreachable
+    interval: 15s
+    input_series:
+      - series: 'traces_span_metrics_calls_total{service_name="checkout", span_name="oteldemo.PaymentService/Charge", span_kind="SPAN_KIND_CLIENT", status_code="STATUS_CODE_UNSET"}'
+        values: '0+4x16 64x24'
+      - series: 'traces_span_metrics_calls_total{service_name="checkout", span_name="oteldemo.PaymentService/Charge", span_kind="SPAN_KIND_CLIENT", status_code="STATUS_CODE_ERROR"}'
+        values: '0x16 0+4x24'
+    alert_rule_test:
+      - eval_time: 7m
+        alertname: DependencyCallErrors
+        exp_alerts:
+          - exp_labels: { alertname: DependencyCallErrors, severity: critical, service: checkout, service_name: checkout, span_name: oteldemo.PaymentService/Charge }
+            exp_annotations:
+              summary: 'checkout → oteldemo.PaymentService/Charge: 100% вызовов падает'
+              description: Сервис не может вызвать зависимость. Источник — вызываемый сервис или сеть до него.
+              runbook_url: https://github.com/Protemir/observability-platform-demo/blob/main/runbooks/DependencyCallErrors.md
+              dashboard: /d/platform-overview/overview
+
+  # A consumer that stops completely.
+  - name: service down
+    interval: 1m
+    input_series:
+      - series: 'traces_span_metrics_calls_total{service_name="accounting", span_name="orders process", span_kind="SPAN_KIND_CONSUMER", status_code="STATUS_CODE_UNSET"}'
+        values: '0+30x20 600x10'
+    alert_rule_test:
+      - eval_time: 19m
+        alertname: ServiceDown
+        exp_alerts: []
+      - eval_time: 24m
+        alertname: ServiceDown
+        exp_alerts:
+          - exp_labels: { alertname: ServiceDown, severity: critical, service: accounting, service_name: accounting }
+            exp_annotations:
+              summary: accounting перестал обрабатывать запросы
+              description: 15 минут назад трафик был, последние 2 минуты нет ни одного спана.
+              runbook_url: https://github.com/Protemir/observability-platform-demo/blob/main/runbooks/ServiceDown.md
+              dashboard: /d/platform-overview/overview
+
+  # emailMemoryLeak: memory grows ~1 MB/s from 60 MB, limit 100 MB.
+  - name: memory leak
+    interval: 15s
+    input_series:
+      - series: 'container_memory_usage_total_bytes{container_name="email"}'
+        values: '60000000x20 60000000+15000000x40'
+      - series: 'container_memory_usage_limit_bytes{container_name="email"}'
+        values: '1000000000x60'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: MemoryLeak
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: MemoryLeak
+        exp_alerts:
+          - exp_labels: { alertname: MemoryLeak, severity: warning, service: email }
+            exp_annotations:
+              summary: 'email: память растёт без остановки'
+              description: По текущему наклону контейнер упрётся в лимит памяти в течение часа, или память уже удвоилась от минимума за час.
+              runbook_url: https://github.com/Protemir/observability-platform-demo/blob/main/runbooks/MemoryLeak.md
+              dashboard: /d/platform-service/service?var-service=email
+
+  # Normal traffic with a background of 0.5 % errors must stay silent (false alarm guard).
+  - name: quiet baseline
+    interval: 15s
+    input_series:
+      - series: 'traces_span_metrics_calls_total{service_name="cart", span_name="oteldemo.CartService/GetCart", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_UNSET"}'
+        values: '0+200x240'
+      - series: 'traces_span_metrics_calls_total{service_name="cart", span_name="oteldemo.CartService/GetCart", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}'
+        values: '0+1x240'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: ServiceHighErrorRate
+        exp_alerts: []
+      - eval_time: 60m
+        alertname: OperationErrors
+        exp_alerts: []
+      - eval_time: 60m
+        alertname: ServiceDown
+        exp_alerts: []
+
+  # Checkout SLO: 20 % of orders fail for 10 minutes -> fast burn.
+  - name: checkout slo fast burn
+    interval: 30s
+    input_series:
+      - series: 'traces_span_metrics_calls_total{service_name="checkout", span_name="oteldemo.CheckoutService/PlaceOrder", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_UNSET"}'
+        values: '0+10x120 1200+8x20'
+      - series: 'traces_span_metrics_calls_total{service_name="checkout", span_name="oteldemo.CheckoutService/PlaceOrder", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}'
+        values: '0x120 0+2x20'
+    alert_rule_test:
+      - eval_time: 59m
+        alertname: CheckoutSloFastBurn
+        exp_alerts: []
+
+  # paymentUnreachable-like outage: every order fails for 10 minutes -> fast burn pages.
+  - name: checkout slo outage
+    interval: 30s
+    input_series:
+      - series: 'traces_span_metrics_calls_total{service_name="checkout", span_name="oteldemo.CheckoutService/PlaceOrder", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_UNSET"}'
+        values: '0+10x120 1200x20'
+      - series: 'traces_span_metrics_calls_total{service_name="checkout", span_name="oteldemo.CheckoutService/PlaceOrder", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}'
+        values: '0x120 0+10x20'
+    alert_rule_test:
+      - eval_time: 70m
+        alertname: CheckoutSloFastBurn
+        exp_alerts:
+          - exp_labels: { alertname: CheckoutSloFastBurn, severity: critical, service: checkout }
+            exp_annotations:
+              summary: 'Оформление заказа: бюджет ошибок сгорает в 14 раз быстрее нормы'
+              description: 'Ошибок за час 15.99% при SLO 99 %. Бюджет на 30 дней уйдёт за 2 дня.'
+              runbook_url: https://github.com/Protemir/observability-platform-demo/blob/main/runbooks/CheckoutSloFastBurn.md
+              dashboard: /d/platform-slo/slo-checkout

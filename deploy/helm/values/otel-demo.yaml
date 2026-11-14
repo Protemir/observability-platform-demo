@@ -1,0 +1,90 @@
+# open-telemetry/opentelemetry-demo 0.42.6 (demo 3.1.0).
+# The demo itself is not changed (ТЗ 4.6): only where its collector sends signals.
+# Bundled Jaeger / Prometheus / Grafana / OpenSearch are replaced by the platform.
+jaeger: { enabled: false }
+prometheus: { enabled: false }
+grafana: { enabled: false }
+opensearch: { enabled: false }
+
+components:
+  load-generator:
+    env:
+      - { name: LOCUST_WEB_HOST, value: "0.0.0.0" }
+      - { name: LOCUST_WEB_PORT, value: "8089" }
+      - { name: LOCUST_USERS, value: "10" }
+      - { name: LOCUST_HOST, value: "http://frontend-proxy:8080" }
+      - { name: LOCUST_HEADLESS, value: "false" }
+      - { name: LOCUST_AUTOSTART, value: "true" }
+      # Browser users are needed for imageSlowLoad: the delay is requested by the
+      # frontend code running in a real browser.
+      - { name: LOCUST_BROWSER_TRAFFIC_ENABLED, value: "true" }
+      - { name: LOCUST_HTTP_USER_WEIGHT, value: "9" }
+      - { name: LOCUST_BROWSER_USER_WEIGHT, value: "1" }
+      - { name: PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION, value: python }
+      - { name: FLAGD_HOST, value: flagd }
+      - { name: FLAGD_PORT, value: "8013" }
+      - { name: FLAGD_OFREP_PORT, value: "8016" }
+      - { name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://$(OTEL_COLLECTOR_NAME):4318" }
+
+opentelemetry-collector:
+  config:
+    receivers:
+      # Valkey (cart cache) metrics, ТЗ 4.1 "базы данных и кэши"
+      redis:
+        endpoint: valkey-cart:6379
+        username: valkey
+        collection_interval: 15s
+    connectors:
+      span_metrics:
+        metrics_flush_interval: 15s
+        histogram:
+          explicit:
+            buckets: [5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1s, 2s, 5s, 10s]
+        exemplars:
+          enabled: true
+        dimensions:
+          - name: rpc.service
+          - name: http.route
+        aggregation_cardinality_limit: 5000
+    exporters:
+      otlp_grpc/tempo:
+        endpoint: tempo.observability:4317
+        tls: { insecure: true }
+        sending_queue: { batch: {} }
+      otlp_http/prometheus:
+        endpoint: http://kps-prometheus.observability:9090/api/v1/otlp
+        tls: { insecure: true }
+        sending_queue: { batch: {} }
+      otlp_http/loki:
+        endpoint: http://loki.observability:3100/otlp
+        tls: { insecure: true }
+        sending_queue: { batch: {} }
+      # The chart defines exporters for its bundled backends and Helm cannot delete
+      # them from a subchart's config (null values survive the merge). They stay
+      # defined but are not used in any pipeline; valid endpoints keep validation happy.
+      otlp_grpc/jaeger:
+        endpoint: tempo.observability:4317
+        tls: { insecure: true }
+      opensearch:
+        http:
+          endpoint: http://loki.observability:3100
+      otlp_grpc/firepit:
+        endpoint: tempo.observability:4317
+        tls: { insecure: true }
+    extensions:
+      opamp:
+        server:
+          ws:
+            endpoint: ws://localhost:4320/v1/opamp
+    service:
+      extensions: [health_check]
+      pipelines:
+        traces:
+          exporters: [otlp_grpc/tempo, span_metrics]
+        metrics:
+          receivers: [otlp, kafkametrics, span_metrics, prometheus/ad, redis]
+          exporters: [otlp_http/prometheus]
+        logs:
+          exporters: [otlp_http/loki]
+        profiles:
+          exporters: [debug]

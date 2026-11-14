@@ -1,0 +1,8 @@
+# Local Kubernetes for the stand: one control-plane + one worker.
+# Whole stand (demo + platform) fits in 8 vCPU / 16 GB; ТЗ limit is 16 vCPU / 32 GB.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: otel-stand
+nodes:
+  - role: control-plane
+  - role: worker

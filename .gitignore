@@ -1,0 +1,7 @@
+.demo/
+deploy/config.env
+deploy/.generated/
+local/secrets/
+node_modules/
+*.log
+.validate/

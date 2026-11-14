@@ -1,0 +1,142 @@
+# Trimmed local stand: OpenTelemetry Demo core services + the observability platform.
+# Used together with the demo's own compose.yaml, see local/up.sh:
+#   docker compose -f <demo>/compose.yaml -f local/compose.platform.yaml up -d
+# Kafka scenarios need <demo>/compose.full.yaml as well (FULL=1 in up.sh).
+
+x-logging: &logging
+  driver: "json-file"
+  options:
+    max-size: "5m"
+    max-file: "2"
+
+services:
+  # --- demo tweaks (no code changes, only config) ---------------------------
+  otel-collector:
+    command:
+      - --config=/etc/otelcol-config.yml
+      - --config=/etc/otelcol-config-extras.yml
+      - --config=/etc/otelcol-config-platform.yml
+      - --config=/etc/otelcol-config-local.yml
+      - --feature-gates=service.profilesSupport
+    volumes:
+      - ${PLATFORM_DIR}/collector/otelcol-config-platform.yml:/etc/otelcol-config-platform.yml:ro
+      - ${PLATFORM_DIR}/local/otelcol-config-local.yml:/etc/otelcol-config-local.yml:ro
+    environment:
+      - TEMPO_OTLP_GRPC_ENDPOINT=tempo:4317
+      - PROMETHEUS_OTLP_ENDPOINT=http://prometheus:9090/api/v1/otlp
+      - LOKI_OTLP_ENDPOINT=http://loki:3100/otlp
+    depends_on:
+      - prometheus
+      - loki
+      - tempo
+
+  load-generator:
+    environment:
+      # Headless browser users cost ~1 GB of RAM; HTTP users are enough for the stand.
+      - LOCUST_BROWSER_TRAFFIC_ENABLED=false
+
+  # --- platform -------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:v3.13.5
+    container_name: prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${RETENTION:-7d}
+      - --web.enable-otlp-receiver
+      - --web.enable-remote-write-receiver
+      - --web.enable-lifecycle
+      - --enable-feature=exemplar-storage
+    volumes:
+      - ${PLATFORM_DIR}/local/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ${PLATFORM_DIR}/alerts:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus
+    ports: ["9090:9090"]
+    deploy: { resources: { limits: { memory: 600M } } }
+    restart: unless-stopped
+    logging: *logging
+
+  loki:
+    image: grafana/loki:3.7.10
+    container_name: loki
+    command: ["-config.file=/etc/loki/loki.yaml"]
+    volumes:
+      - ${PLATFORM_DIR}/local/loki.yaml:/etc/loki/loki.yaml:ro
+      - loki-data:/loki
+    ports: ["3100:3100"]
+    deploy: { resources: { limits: { memory: 400M } } }
+    restart: unless-stopped
+    logging: *logging
+
+  tempo:
+    image: grafana/tempo:3.1.1
+    container_name: tempo
+    command: ["-config.file=/etc/tempo/tempo.yaml"]
+    user: "0:0"
+    volumes:
+      - ${PLATFORM_DIR}/local/tempo.yaml:/etc/tempo/tempo.yaml:ro
+      - tempo-data:/var/tempo
+    ports: ["3200:3200"]
+    deploy: { resources: { limits: { memory: 600M } } }
+    restart: unless-stopped
+    logging: *logging
+
+  alertmanager:
+    image: prom/alertmanager:v0.35.0
+    container_name: alertmanager
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    volumes:
+      - ${PLATFORM_DIR}/local/alertmanager.local.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ${PLATFORM_DIR}/alertmanager/templates:/etc/alertmanager/templates:ro
+      - ${PLATFORM_DIR}/local/secrets:/etc/alertmanager/secrets:ro
+    ports: ["9093:9093"]
+    deploy: { resources: { limits: { memory: 100M } } }
+    restart: unless-stopped
+    logging: *logging
+
+  grafana:
+    image: grafana/grafana:13.2.6
+    container_name: grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD__FILE=/run/secrets/grafana-admin
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+      - GF_FEATURE_TOGGLES_ENABLE=traceqlEditor
+      - GF_NEWS_NEWS_FEED_ENABLED=false
+      - GF_ANALYTICS_REPORTING_ENABLED=false
+      - GF_ANALYTICS_CHECK_FOR_UPDATES=false
+    volumes:
+      - ${PLATFORM_DIR}/local/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ${PLATFORM_DIR}/dashboards:/var/lib/grafana/dashboards:ro
+      - ${PLATFORM_DIR}/local/secrets/grafana-admin:/run/secrets/grafana-admin:ro
+    ports: ["3000:3000"]
+    deploy: { resources: { limits: { memory: 300M } } }
+    restart: unless-stopped
+    logging: *logging
+
+  # Local stand-ins for the outside world: no real mailbox or Telegram bot needed.
+  mailpit:
+    image: axllent/mailpit:v1.33.1
+    container_name: mailpit
+    ports: ["8025:8025"]
+    deploy: { resources: { limits: { memory: 64M } } }
+    restart: unless-stopped
+    logging: *logging
+
+  tg-mock:
+    image: node:22-alpine
+    container_name: tg-mock
+    command: ["node", "/app/server.mjs"]
+    volumes:
+      - ${PLATFORM_DIR}/local/tg-mock:/app:ro
+    ports: ["8088:8088"]
+    deploy: { resources: { limits: { memory: 64M } } }
+    restart: unless-stopped
+    logging: *logging
+
+volumes:
+  prometheus-data:
+  loki-data:
+  tempo-data:

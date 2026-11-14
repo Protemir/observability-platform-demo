@@ -1,0 +1,109 @@
+# Recording rules that do not depend on where the stand runs.
+# Source: span metrics produced by the collector's span_metrics connector
+# (traces_span_metrics_calls_total / traces_span_metrics_duration_milliseconds_*).
+groups:
+  - name: red.recording
+    interval: 15s
+    rules:
+      # --- inbound traffic of a service (server + consumer spans) ---
+      - record: service:requests:rate2m
+        expr: |
+          sum by (service_name) (
+            rate(traces_span_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[2m])
+          )
+      - record: service:errors:rate2m
+        expr: |
+          sum by (service_name) (
+            rate(traces_span_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER", status_code="STATUS_CODE_ERROR"}[2m])
+          )
+      - record: service:error_ratio:rate2m
+        expr: service:errors:rate2m / service:requests:rate2m
+      - record: service:latency_ms:p95_2m
+        expr: |
+          histogram_quantile(0.95, sum by (service_name, le) (
+            rate(traces_span_metrics_duration_milliseconds_bucket{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[2m])
+          ))
+      # Per operation: catches a failure that hits one endpoint of a busy service
+      # (productCatalogFailure fails a single product, imageSlowLoad one route).
+      - record: operation:requests:rate2m
+        expr: |
+          sum by (service_name, span_name) (
+            rate(traces_span_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[2m])
+          )
+      - record: operation:error_ratio:rate2m
+        expr: |
+          sum by (service_name, span_name) (
+            rate(traces_span_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER", status_code="STATUS_CODE_ERROR"}[2m])
+          ) / operation:requests:rate2m
+      - record: operation:latency_ms:p95_2m
+        expr: |
+          histogram_quantile(0.95, sum by (service_name, span_name, le) (
+            rate(traces_span_metrics_duration_milliseconds_bucket{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[2m])
+          ))
+      # Same operation one hour earlier: latency alerts compare against the service's own norm.
+      - record: operation:latency_ms:p95_1h
+        expr: |
+          histogram_quantile(0.95, sum by (service_name, span_name, le) (
+            rate(traces_span_metrics_duration_milliseconds_bucket{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[1h])
+          ))
+      # --- outbound calls: a dead dependency shows up here even if it emits nothing itself ---
+      - record: dependency:requests:rate2m
+        expr: |
+          sum by (service_name, span_name) (
+            rate(traces_span_metrics_calls_total{span_kind="SPAN_KIND_CLIENT"}[2m])
+          )
+      - record: dependency:error_ratio:rate2m
+        expr: |
+          sum by (service_name, span_name) (
+            rate(traces_span_metrics_calls_total{span_kind="SPAN_KIND_CLIENT", status_code="STATUS_CODE_ERROR"}[2m])
+          ) / dependency:requests:rate2m
+
+  # SLO: checkout path, measured where the order is placed (checkout PlaceOrder).
+  # Availability target 99 %, latency target 95 % of orders under 2 s, 30 day window.
+  - name: slo.checkout.recording
+    interval: 30s
+    rules:
+      - record: slo:checkout_errors:ratio_rate5m
+        expr: |
+          sum(rate(traces_span_metrics_calls_total{service_name="checkout", span_name=~".*PlaceOrder", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}[5m]))
+          /
+          sum(rate(traces_span_metrics_calls_total{service_name="checkout", span_name=~".*PlaceOrder", span_kind="SPAN_KIND_SERVER"}[5m]))
+      - record: slo:checkout_errors:ratio_rate30m
+        expr: |
+          sum(rate(traces_span_metrics_calls_total{service_name="checkout", span_name=~".*PlaceOrder", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}[30m]))
+          /
+          sum(rate(traces_span_metrics_calls_total{service_name="checkout", span_name=~".*PlaceOrder", span_kind="SPAN_KIND_SERVER"}[30m]))
+      - record: slo:checkout_errors:ratio_rate1h
+        expr: |
+          sum(rate(traces_span_metrics_calls_total{service_name="checkout", span_name=~".*PlaceOrder", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}[1h]))
+          /
+          sum(rate(traces_span_metrics_calls_total{service_name="checkout", span_name=~".*PlaceOrder", span_kind="SPAN_KIND_SERVER"}[1h]))
+      - record: slo:checkout_errors:ratio_rate6h
+        expr: |
+          sum(rate(traces_span_metrics_calls_total{service_name="checkout", span_name=~".*PlaceOrder", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}[6h]))
+          /
+          sum(rate(traces_span_metrics_calls_total{service_name="checkout", span_name=~".*PlaceOrder", span_kind="SPAN_KIND_SERVER"}[6h]))
+      - record: slo:checkout_slow:ratio_rate5m
+        expr: |
+          1 - (
+            sum(rate(traces_span_metrics_duration_milliseconds_bucket{service_name="checkout", span_name=~".*PlaceOrder", span_kind="SPAN_KIND_SERVER", le="2000"}[5m]))
+            /
+            sum(rate(traces_span_metrics_duration_milliseconds_count{service_name="checkout", span_name=~".*PlaceOrder", span_kind="SPAN_KIND_SERVER"}[5m]))
+          )
+      - record: slo:checkout_slow:ratio_rate1h
+        expr: |
+          1 - (
+            sum(rate(traces_span_metrics_duration_milliseconds_bucket{service_name="checkout", span_name=~".*PlaceOrder", span_kind="SPAN_KIND_SERVER", le="2000"}[1h]))
+            /
+            sum(rate(traces_span_metrics_duration_milliseconds_count{service_name="checkout", span_name=~".*PlaceOrder", span_kind="SPAN_KIND_SERVER"}[1h]))
+          )
+      # Error budget left over the last 7 days (the stand keeps 7 days; 30 days on a real system).
+      - record: slo:checkout_error_budget:remaining_7d
+        expr: |
+          1 - (
+            (
+              sum(increase(traces_span_metrics_calls_total{service_name="checkout", span_name=~".*PlaceOrder", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}[7d]))
+              /
+              sum(increase(traces_span_metrics_calls_total{service_name="checkout", span_name=~".*PlaceOrder", span_kind="SPAN_KIND_SERVER"}[7d]))
+            ) / 0.01
+          )

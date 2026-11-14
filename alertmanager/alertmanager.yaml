@@ -1,0 +1,65 @@
+# Alertmanager config for the Kubernetes deployment (kube-prometheus-stack).
+# No secrets here: SMTP password and Telegram bot token are read from files that
+# Kubernetes mounts from the Secret "alert-secrets" (see docs/alerts.md).
+# Placeholders in <> are filled by deploy/install.sh from deploy/config.env (not committed).
+
+global:
+  resolve_timeout: 5m
+  smtp_smarthost: "<smtp-host>:587"
+  smtp_from: "<alerts@your-domain>"
+  smtp_auth_username: "<smtp-user>"
+  smtp_auth_password_file: /etc/alertmanager/secrets/alert-secrets/smtp-password
+  smtp_require_tls: true            # STARTTLS, ТЗ 4.5 "SMTP с TLS"
+
+templates:
+  - /etc/alertmanager/config/*.tmpl
+
+route:
+  receiver: oncall
+  # One notification per problem and service, not per pod or per span name.
+  group_by: [alertname, service]
+  group_wait: 30s
+  group_interval: 2m
+  repeat_interval: 4h
+  routes:
+    - matchers: [alertname="Watchdog"]
+      receiver: blackhole          # dead man's switch, wire to an external heartbeat if needed
+    - matchers: [severity="info"]
+      receiver: email-only
+
+inhibit_rules:
+  # A critical alert on a service hides the warning about the same service.
+  - source_matchers: [severity="critical"]
+    target_matchers: [severity="warning"]
+    equal: [service]
+  # If the service is down, its error/latency alerts add nothing.
+  - source_matchers: [alertname="ServiceDown"]
+    target_matchers: [alertname=~"ServiceHighErrorRate|ServiceHighLatency|DependencyCallErrors"]
+    equal: [service]
+  # The caller fails because a dependency fails: the dependency alert is the useful one.
+  - source_matchers: [alertname="DependencyCallErrors"]
+    target_matchers: [alertname="ServiceHighErrorRate"]
+    equal: [service]
+
+receivers:
+  - name: blackhole
+  - name: oncall
+    email_configs:
+      - to: "<oncall@your-domain>"
+        send_resolved: true
+        headers:
+          Subject: '{{ template "platform.subject" . }}'
+        html: '{{ template "platform.email.html" . }}'
+    telegram_configs:
+      - bot_token_file: /etc/alertmanager/secrets/alert-secrets/telegram-bot-token
+        chat_id_file: /etc/alertmanager/secrets/alert-secrets/telegram-chat-id
+        parse_mode: HTML
+        message: '{{ template "platform.telegram" . }}'
+        send_resolved: true
+  - name: email-only
+    email_configs:
+      - to: "<oncall@your-domain>"
+        send_resolved: true
+        headers:
+          Subject: '{{ template "platform.subject" . }}'
+        html: '{{ template "platform.email.html" . }}'

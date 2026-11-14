@@ -1,0 +1,130 @@
+# prometheus-community/kube-prometheus-stack 93.3.0
+# Prometheus (+ OTLP receiver, exemplars, remote-write receiver for Tempo),
+# Alertmanager, Grafana, node-exporter, kube-state-metrics.
+fullnameOverride: kps
+
+prometheus:
+  prometheusSpec:
+    retention: 7d                      # ТЗ 4.2, configurable
+    retentionSize: 18GB
+    scrapeInterval: 15s
+    evaluationInterval: 15s
+    enableOTLPReceiver: true           # collector pushes metrics over OTLP
+    enableRemoteWriteReceiver: true    # Tempo service graph
+    enableFeatures: [exemplar-storage]
+    exemplars:
+      maxSize: 100000
+    otlp:
+      keepIdentifyingResourceAttributes: true
+      promoteResourceAttributes:
+        - service.name
+        - service.namespace
+        - service.instance.id
+        - k8s.namespace.name
+        - k8s.pod.name
+        - k8s.container.name
+        - k8s.deployment.name
+        - k8s.node.name
+        - kafka.cluster.alias
+    tsdb:
+      outOfOrderTimeWindow: 30m
+    # Pick up PrometheusRule objects from any release (our chart "platform").
+    ruleSelectorNilUsesHelmValues: false
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    resources:
+      requests: { cpu: 300m, memory: 1Gi }
+      limits: { memory: 3Gi }
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          accessModes: [ReadWriteOnce]
+          resources:
+            requests:
+              storage: 20Gi
+
+alertmanager:
+  alertmanagerSpec:
+    # SMTP password and Telegram bot token: Secret "alert-secrets", mounted at
+    # /etc/alertmanager/secrets/alert-secrets/ (created by deploy/install.sh).
+    secrets: [alert-secrets]
+    resources:
+      requests: { cpu: 20m, memory: 64Mi }
+      limits: { memory: 128Mi }
+  # Routing, receivers and templates come from alertmanager/alertmanager.yaml and
+  # alertmanager/templates/*.tmpl (install.sh passes them as a values file).
+
+grafana:
+  fullnameOverride: grafana
+  admin:
+    existingSecret: grafana-admin       # created by install.sh, never in Git
+    userKey: admin-user
+    passwordKey: admin-password
+  defaultDashboardsEnabled: true        # node / pod / kube-state dashboards of the stack
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      labelValue: "1"
+      searchNamespace: ALL
+      folderAnnotation: grafana_folder
+      provider:
+        foldersFromFilesStructure: true
+    datasources:
+      enabled: true
+      uid: prometheus
+      exemplarTraceIdDestinations:
+        datasourceUid: tempo
+        traceIdLabelName: trace_id
+        urlDisplayLabel: Trace
+      alertmanager:
+        enabled: true
+        uid: alertmanager
+  additionalDataSources:
+    - name: Tempo
+      uid: tempo
+      type: tempo
+      url: http://tempo.observability:3200
+      jsonData:
+        serviceMap: { datasourceUid: prometheus }
+        nodeGraph: { enabled: true }
+        tracesToLogsV2:
+          datasourceUid: loki
+          spanStartTimeShift: "-5m"
+          spanEndTimeShift: "5m"
+          customQuery: true
+          query: '{service_name="$${__span.tags["service.name"]}"} | trace_id="$${__trace.traceId}"'
+        tracesToMetrics:
+          datasourceUid: prometheus
+          tags: [{ key: service.name, value: service_name }]
+          queries:
+            - name: Error rate
+              query: sum(rate(traces_span_metrics_calls_total{$$__tags, status_code="STATUS_CODE_ERROR"}[1m]))
+        lokiSearch: { datasourceUid: loki }
+    - name: Loki
+      uid: loki
+      type: loki
+      url: http://loki.observability:3100
+      jsonData:
+        derivedFields:
+          - name: trace_id
+            matcherType: label
+            matcherRegex: trace_id
+            datasourceUid: tempo
+            url: "$${__value.raw}"
+            urlDisplayLabel: Open trace
+  grafana.ini:
+    analytics:
+      reporting_enabled: false
+      check_for_updates: false
+    feature_toggles:
+      enable: traceqlEditor
+  resources:
+    requests: { cpu: 50m, memory: 256Mi }
+    limits: { memory: 512Mi }
+  ingress:
+    enabled: false   # on a real cluster: enable with TLS (cert-manager), ТЗ 4.5 HTTPS
+
+# Node and pod metrics, ТЗ 4.1
+nodeExporter: { enabled: true }
+kubeStateMetrics: { enabled: true }
