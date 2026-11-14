@@ -1,6 +1,9 @@
-# Local Docker stand only: extra container metrics used by the restart alert.
+# Local Docker stand only: restart counter and the compose project as a label
+# (resource rules look only at demo services, like namespace=otel-demo in Kubernetes).
 receivers:
   docker_stats:
+    container_labels_to_metric_labels:
+      com.docker.compose.project: compose.project
     metrics:
       container.restarts:
         enabled: true

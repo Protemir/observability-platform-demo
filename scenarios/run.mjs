@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = join(ROOT, 'scenarios/results-local.md');
 const TG = process.env.TG_URL || 'http://localhost:8088/api/messages';
-const LIMIT_MS = 8 * 60_000;   // stop waiting after 8 minutes
+const LIMIT_MS = (+process.env.LIMIT_MIN || 8) * 60_000; // stop waiting after 8 minutes by default
 const COOLDOWN_MS = 4 * 60_000; // let the stand recover between scenarios
 
 // scenario -> text that must appear in the first firing message (service or dependency)
@@ -52,7 +52,7 @@ for (const name of list) {
   flag(name, 'off');
   const line = hit
     ? `| ${name} | ${fmt(parseAt(hit.at) - t0)} | ${hit.text.split('\n')[0].replace(/<[^>]+>/g, '').replace(/\|/g, '/')} |`
-    : `| ${name} | не пришло за 8 мин | — |`;
+    : `| ${name} | не пришло за ${LIMIT_MS / 60000} мин | — |`;
   console.log(line);
   appendFileSync(OUT, line + '\n');
   if (list.length > 1) await sleep(COOLDOWN_MS);

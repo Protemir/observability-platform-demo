@@ -77,7 +77,9 @@ services:
       - ${PLATFORM_DIR}/local/tempo.yaml:/etc/tempo/tempo.yaml:ro
       - tempo-data:/var/tempo
     ports: ["3200:3200"]
-    deploy: { resources: { limits: { memory: 600M } } }
+    environment:
+      - GOMEMLIMIT=850MiB
+    deploy: { resources: { limits: { memory: 1G } } }
     restart: unless-stopped
     logging: *logging
 

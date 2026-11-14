@@ -58,7 +58,7 @@ groups:
             and operation:latency_ms:p95_2m > 500
           )
           and on (service_name, span_name) operation:requests:rate2m > 0.02
-        for: 2m
+        for: 1m
         labels:
           severity: warning
           service: '{{ $labels.service_name }}'

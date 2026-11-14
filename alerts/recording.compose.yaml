@@ -1,25 +1,26 @@
 # Local Docker stand: container resources from the collector's docker_stats receiver,
 # normalised to the same series as recording.k8s.yaml, so alerts.yaml is shared.
-# Container names in the demo compose file equal service names.
+# Container names in the demo compose file equal service names. Only the demo project
+# counts (the platform watches the app, like namespace="otel-demo" in Kubernetes).
 groups:
   - name: resources.compose.recording
     interval: 15s
     rules:
       - record: service:container_memory_bytes
-        expr: max by (service) (label_replace(container_memory_usage_total_bytes, "service", "$1", "container_name", "(.*)"))
+        expr: max by (service) (label_replace(container_memory_usage_total_bytes{compose_project="otel-stand", container_name!~"prometheus|loki|tempo|grafana|alertmanager|mailpit|tg-mock"}, "service", "$1", "container_name", "(.*)"))
       - record: service:container_memory_limit_bytes
-        expr: max by (service) (label_replace(container_memory_usage_limit_bytes, "service", "$1", "container_name", "(.*)"))
+        expr: max by (service) (label_replace(container_memory_usage_limit_bytes{compose_project="otel-stand", container_name!~"prometheus|loki|tempo|grafana|alertmanager|mailpit|tg-mock"}, "service", "$1", "container_name", "(.*)"))
       - record: service:container_cpu_cores:rate2m
         expr: |
           sum by (service) (label_replace(
-            rate(container_cpu_usage_nanoseconds_total[2m]) / 1e9,
+            rate(container_cpu_usage_nanoseconds_total{compose_project="otel-stand", container_name!~"prometheus|loki|tempo|grafana|alertmanager|mailpit|tg-mock"}[2m]) / 1e9,
             "service", "$1", "container_name", "(.*)"))
       - record: service:container_restarts:increase10m
-        expr: sum by (service) (label_replace(increase(container_restarts_total[10m]), "service", "$1", "container_name", "(.*)"))
+        expr: sum by (service) (label_replace(increase(container_restarts_total{compose_project="otel-stand", container_name!~"prometheus|loki|tempo|grafana|alertmanager|mailpit|tg-mock"}[10m]), "service", "$1", "container_name", "(.*)"))
       - record: service:container_uptime_seconds
         # docker_stats stops reporting a stopped container; OTLP series have no staleness
         # markers, so "fresh in the last minute" is what tells a running container.
         expr: |
           max by (service) (label_replace(
-            container_uptime_seconds and (timestamp(container_uptime_seconds) > time() - 60),
+            container_uptime_seconds{compose_project="otel-stand", container_name!~"prometheus|loki|tempo|grafana|alertmanager|mailpit|tg-mock"} and (timestamp(container_uptime_seconds{compose_project="otel-stand", container_name!~"prometheus|loki|tempo|grafana|alertmanager|mailpit|tg-mock"}) > time() - 60),
             "service", "$1", "container_name", "(.*)"))

@@ -57,11 +57,11 @@ tests:
       - series: 'traces_span_metrics_calls_total{service_name="accounting", span_name="orders process", span_kind="SPAN_KIND_CONSUMER", status_code="STATUS_CODE_UNSET"}'
         values: '0+30x20 600x10'
       # container metrics disappear when it stops; email keeps running without work
-      - series: 'container_uptime_seconds{container_name="accounting"}'
+      - series: 'container_uptime_seconds{compose_project="otel-stand", container_name="accounting"}'
         values: '3600+60x20'
       - series: 'traces_span_metrics_calls_total{service_name="email", span_name="POST /send_order_confirmation", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_UNSET"}'
         values: '0+30x20 600x10'
-      - series: 'container_uptime_seconds{container_name="email"}'
+      - series: 'container_uptime_seconds{compose_project="otel-stand", container_name="email"}'
         values: '3600+60x30'
     alert_rule_test:
       - eval_time: 19m
@@ -81,11 +81,11 @@ tests:
   - name: memory leak
     interval: 15s
     input_series:
-      - series: 'container_memory_usage_total_bytes{container_name="email"}'
+      - series: 'container_memory_usage_total_bytes{compose_project="otel-stand", container_name="email"}'
         values: '60000000x20 60000000+15000000x40'
-      - series: 'container_memory_usage_limit_bytes{container_name="email"}'
+      - series: 'container_memory_usage_limit_bytes{compose_project="otel-stand", container_name="email"}'
         values: '1000000000x60'
-      - series: 'container_uptime_seconds{container_name="email"}'
+      - series: 'container_uptime_seconds{compose_project="otel-stand", container_name="email"}'
         values: '3600+15x60'
     alert_rule_test:
       - eval_time: 4m
@@ -180,13 +180,13 @@ tests:
   - name: memory warm-up and saw
     interval: 15s
     input_series:
-      - series: 'container_uptime_seconds{container_name="grafana"}'
+      - series: 'container_uptime_seconds{compose_project="otel-stand", container_name="recommendation"}'
         values: '0+15x80'
-      - series: 'container_uptime_seconds{container_name="ad"}'
+      - series: 'container_uptime_seconds{compose_project="otel-stand", container_name="ad"}'
         values: '3600+15x80'
-      - series: 'container_memory_usage_total_bytes{container_name="grafana"}'
+      - series: 'container_memory_usage_total_bytes{compose_project="otel-stand", container_name="recommendation"}'
         values: '50000000+20000000x8 210000000x80'
-      - series: 'container_memory_usage_total_bytes{container_name="ad"}'
+      - series: 'container_memory_usage_total_bytes{compose_project="otel-stand", container_name="ad"}'
         values: '200000000 205000000 210000000 215000000 220000000 200000000 205000000 210000000 215000000 220000000 200000000 205000000 210000000 215000000 220000000 200000000 205000000 210000000 215000000 220000000 200000000 205000000 210000000 215000000 220000000 200000000 205000000 210000000 215000000 220000000 200000000 205000000 210000000 215000000 220000000 200000000 205000000 210000000 215000000 220000000'
     alert_rule_test:
       - eval_time: 3m
