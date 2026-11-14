@@ -63,7 +63,7 @@ node scenarios/flag.mjs all off                # вернуть
 
 - Локальный стенд на Docker работает, снимки — в `screenshots/`. Прогнали 9 сценариев сбоев, которые
   воспроизводятся без Kafka и браузерной нагрузки: оповещение до 5 минут — в 8 из 9
-  ([scenarios/results-local.md](scenarios/results-local.md)). По ходу нашли и убрали 7 источников ложных срабатываний.
+  ([scenarios/results-local.md](scenarios/results-local.md)). По ходу нашли и убрали 6 источников ложных срабатываний и ускорили обнаружение редких сбоев.
 - Связь сигналов проверена: трасса неудачного заказа ведёт в payment, по её `trace_id` находятся журналы payment,
   checkout и frontend; оповещения приходят в почту (Mailpit) и Telegram (заглушка Bot API).
 - Kubernetes: все четыре чарта рендерятся с нашими values, 202 манифеста проходят kubeconform,
