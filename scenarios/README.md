@@ -1,5 +1,7 @@
 # 12 сценариев сбоев: чем ловятся и где искать причину
 
+Замеры на локальном стенде: [results-local.md](results-local.md) (8 из 9 воспроизводимых сценариев — оповещение до 5 минут).
+
 Флаги — встроенные в OpenTelemetry Demo 3.1.0 (flagd). Переключение: `node scenarios/flag.mjs <флаг> on|off`
 (локальный стенд) или `K8S=1 node scenarios/flag.mjs <флаг> on|off` (Kubernetes).
 
@@ -7,8 +9,8 @@
 |---|---|---|---|---|
 | 1 | adFailure | ad отвечает ошибкой на часть запросов | ServiceHighErrorRate{service=ad} | Обзор → таблица сервисов, ad красный |
 | 2 | adHighCpu | ad грузит процессор | HighCpu{service=ad}, затем ServiceHighLatency | Инфраструктура → CPU контейнеров |
-| 3 | cartFailure | часть операций корзины уходит в сбойное хранилище | ServiceHighErrorRate{service=cart} + DependencyCallErrors{frontend→cart} | Обзор → карта, ребро frontend→cart |
-| 4 | emailMemoryLeak | память email растёт | MemoryLeak{service=email} → MemoryNearLimit / ContainerRestarting | Сервис email → «Память контейнера» |
+| 3 | cartFailure | EmptyCart уходит в сбойное хранилище (10 с тайм-аут) | ServiceHighLatency{frontend-proxy}, затем OperationErrors{cart, EmptyCart} | Сервис checkout → «Исходящие вызовы» |
+| 4 | emailMemoryLeak | память email растёт | MemoryLeak / ContainerRestarting{email} (при 10000× — OOM за минуту) | Сервис email → «Память контейнера» |
 | 5 | imageSlowLoad | картинки во фронтенде грузятся 5–10 с | ServiceHighLatency{frontend-proxy, маршрут images} | Сервис frontend-proxy → задержка по операциям |
 | 6 | intlShippingSlowdown | расчёт доставки вне США тормозит | ServiceHighLatency{service=shipping}, CheckoutLatencySloBurn | Сервис shipping → p95, медленная трасса |
 | 7 | kafkaConsumerDead¹ | потребитель перестаёт читать заказы | KafkaConsumerStalled, ServiceDown{accounting} | Очереди → «Чтение группами» |
@@ -16,7 +18,7 @@
 | 9 | paymentFailure | часть платежей падает | ServiceHighErrorRate{service=payment}, CheckoutSloFastBurn | SLO checkout → неудачные заказы → трасса |
 | 10 | paymentUnreachable | payment недоступен | DependencyCallErrors{checkout→PaymentService/Charge} | Обзор → карта, красное ребро checkout→payment |
 | 11 | productCatalogFailure | ошибка каталога для одного товара | OperationErrors / ServiceHighErrorRate{product-catalog} | Сервис product-catalog → трасса с ошибкой, атрибут product.id |
-| 12 | recommendationCacheFailure | кэш рекомендаций растёт без вытеснения | MemoryLeak{service=recommendation}, ServiceHighLatency | Сервис recommendation → память |
+| 12 | recommendationCacheFailure | кэш рекомендаций растёт без вытеснения | ServiceHighLatency{recommendation}, MemoryLeak | Сервис recommendation → память, задержка |
 
 ¹ В демо 3.1.0 флага `kafkaConsumerDead` нет (проверено по `src/flagd/demo.flagd.json` тега 3.1.0).
 ТЗ это предусматривает: замену согласуем на этапе 1. Предлагаем воспроизводить тот же симптом без правки
