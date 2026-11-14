@@ -212,7 +212,7 @@
       "links": [],
       "targets": [
         {
-          "expr": "slo:checkout_error_budget:remaining_7d",
+          "expr": "clamp_min(slo:checkout_error_budget:remaining_7d, 0)",
           "instant": false,
           "range": true,
           "refId": "A"
@@ -692,7 +692,7 @@
       },
       "targets": [
         {
-          "expr": "slo:checkout_error_budget:remaining_7d",
+          "expr": "clamp_min(slo:checkout_error_budget:remaining_7d, 0)",
           "legendFormat": "остаток",
           "refId": "A"
         }

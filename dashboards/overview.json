@@ -394,7 +394,7 @@
       "links": [],
       "targets": [
         {
-          "expr": "slo:checkout_error_budget:remaining_7d",
+          "expr": "clamp_min(slo:checkout_error_budget:remaining_7d, 0)",
           "instant": false,
           "range": true,
           "refId": "A"
@@ -604,14 +604,24 @@
       ],
       "transformations": [
         {
-          "id": "merge",
-          "options": {}
+          "id": "joinByField",
+          "options": {
+            "byField": "service_name",
+            "mode": "outer"
+          }
         },
         {
           "id": "organize",
           "options": {
             "excludeByName": {
-              "Time": true
+              "Time": true,
+              "Time 1": true,
+              "Time 2": true,
+              "Time 3": true,
+              "__name__": true,
+              "__name__ 1": true,
+              "__name__ 2": true,
+              "__name__ 3": true
             },
             "renameByName": {
               "service_name": "service_name",

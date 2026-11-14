@@ -16,5 +16,10 @@ groups:
             "service", "$1", "container_name", "(.*)"))
       - record: service:container_restarts:increase10m
         expr: sum by (service) (label_replace(increase(container_restarts_total[10m]), "service", "$1", "container_name", "(.*)"))
-      - record: service:container_memory_bytes:min1h
-        expr: min_over_time(service:container_memory_bytes[1h])
+      - record: service:container_uptime_seconds
+        # docker_stats stops reporting a stopped container; OTLP series have no staleness
+        # markers, so "fresh in the last minute" is what tells a running container.
+        expr: |
+          max by (service) (label_replace(
+            container_uptime_seconds and (timestamp(container_uptime_seconds) > time() - 60),
+            "service", "$1", "container_name", "(.*)"))

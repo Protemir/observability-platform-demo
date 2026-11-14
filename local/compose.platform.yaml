@@ -107,12 +107,13 @@ services:
       - GF_NEWS_NEWS_FEED_ENABLED=false
       - GF_ANALYTICS_REPORTING_ENABLED=false
       - GF_ANALYTICS_CHECK_FOR_UPDATES=false
+      - GOMEMLIMIT=750MiB   # keeps the Go heap under the container limit
     volumes:
       - ${PLATFORM_DIR}/local/grafana/provisioning:/etc/grafana/provisioning:ro
       - ${PLATFORM_DIR}/dashboards:/var/lib/grafana/dashboards:ro
       - ${PLATFORM_DIR}/local/secrets/grafana-admin:/run/secrets/grafana-admin:ro
     ports: ["3000:3000"]
-    deploy: { resources: { limits: { memory: 300M } } }
+    deploy: { resources: { limits: { memory: 1G } } }
     restart: unless-stopped
     logging: *logging
 

@@ -27,7 +27,7 @@ tests:
           - exp_labels: { alertname: ServiceHighErrorRate, severity: critical, service: payment, service_name: payment }
             exp_annotations:
               summary: 'payment: 16.67% запросов с ошибкой'
-              description: Доля ошибок входящих запросов выше 5 % дольше минуты.
+              description: Доля ошибок входящих запросов выше 5 % за 2 минуты (или выше 3 % и не меньше 3 ошибок за 5 минут).
               runbook_url: https://github.com/Protemir/observability-platform-demo/blob/main/runbooks/ServiceHighErrorRate.md
               dashboard: /d/platform-service/service?var-service=payment
 
@@ -56,6 +56,13 @@ tests:
     input_series:
       - series: 'traces_span_metrics_calls_total{service_name="accounting", span_name="orders process", span_kind="SPAN_KIND_CONSUMER", status_code="STATUS_CODE_UNSET"}'
         values: '0+30x20 600x10'
+      # container metrics disappear when it stops; email keeps running without work
+      - series: 'container_uptime_seconds{container_name="accounting"}'
+        values: '3600+60x20'
+      - series: 'traces_span_metrics_calls_total{service_name="email", span_name="POST /send_order_confirmation", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_UNSET"}'
+        values: '0+30x20 600x10'
+      - series: 'container_uptime_seconds{container_name="email"}'
+        values: '3600+60x30'
     alert_rule_test:
       - eval_time: 19m
         alertname: ServiceDown
@@ -66,7 +73,7 @@ tests:
           - exp_labels: { alertname: ServiceDown, severity: critical, service: accounting, service_name: accounting }
             exp_annotations:
               summary: accounting перестал обрабатывать запросы
-              description: 15 минут назад трафик был, последние 2 минуты нет ни одного спана.
+              description: Трафик был, а последние 2 минуты нет ни одного спана и контейнер не запущен.
               runbook_url: https://github.com/Protemir/observability-platform-demo/blob/main/runbooks/ServiceDown.md
               dashboard: /d/platform-overview/overview
 
@@ -78,17 +85,19 @@ tests:
         values: '60000000x20 60000000+15000000x40'
       - series: 'container_memory_usage_limit_bytes{container_name="email"}'
         values: '1000000000x60'
+      - series: 'container_uptime_seconds{container_name="email"}'
+        values: '3600+15x60'
     alert_rule_test:
       - eval_time: 4m
         alertname: MemoryLeak
         exp_alerts: []
-      - eval_time: 10m
+      - eval_time: 12m
         alertname: MemoryLeak
         exp_alerts:
           - exp_labels: { alertname: MemoryLeak, severity: warning, service: email }
             exp_annotations:
               summary: 'email: память растёт без остановки'
-              description: По текущему наклону контейнер упрётся в лимит памяти в течение часа, или память уже удвоилась от минимума за час.
+              description: Память росла в каждом 2-минутном окне последних 4 минут, прирост больше 10 МБ. Норма — пила (GC) или плато после прогрева.
               runbook_url: https://github.com/Protemir/observability-platform-demo/blob/main/runbooks/MemoryLeak.md
               dashboard: /d/platform-service/service?var-service=email
 
@@ -110,6 +119,30 @@ tests:
       - eval_time: 60m
         alertname: ServiceDown
         exp_alerts: []
+
+  # cartFailure: only EmptyCart fails, ~1.5 calls a minute -> OperationErrors on cart.
+  - name: rare operation fails
+    interval: 15s
+    input_series:
+      - series: 'traces_span_metrics_calls_total{service_name="cart", span_name="POST /oteldemo.CartService/GetCart", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_UNSET"}'
+        values: '0+8x60'
+      - series: 'traces_span_metrics_calls_total{service_name="cart", span_name="POST /oteldemo.CartService/EmptyCart", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_UNSET"}'
+        values: '0+0.4x20 8x40'
+      - series: 'traces_span_metrics_calls_total{service_name="cart", span_name="POST /oteldemo.CartService/EmptyCart", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}'
+        values: '0x20 0+0.4x40'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: OperationErrors
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: OperationErrors
+        exp_alerts:
+          - exp_labels: { alertname: OperationErrors, severity: warning, service: cart, service_name: cart, span_name: POST /oteldemo.CartService/EmptyCart }
+            exp_annotations:
+              summary: 'cart / POST /oteldemo.CartService/EmptyCart: 100% ошибок'
+              description: Ошибки в одной операции сервиса (например, один товар или один маршрут).
+              runbook_url: https://github.com/Protemir/observability-platform-demo/blob/main/runbooks/OperationErrors.md
+              dashboard: /d/platform-service/service?var-service=cart
 
   # Checkout SLO: 20 % of orders fail for 10 minutes -> fast burn.
   - name: checkout slo fast burn
@@ -139,6 +172,26 @@ tests:
           - exp_labels: { alertname: CheckoutSloFastBurn, severity: critical, service: checkout }
             exp_annotations:
               summary: 'Оформление заказа: бюджет ошибок сгорает в 14 раз быстрее нормы'
-              description: 'Ошибок за час 15.99% при SLO 99 %. Бюджет на 30 дней уйдёт за 2 дня.'
+              description: 'Ошибок за час больше 14,4 % при SLO 99 %: бюджет на 30 дней уйдёт за 2 дня.'
               runbook_url: https://github.com/Protemir/observability-platform-demo/blob/main/runbooks/CheckoutSloFastBurn.md
               dashboard: /d/platform-slo/slo-checkout
+
+  # Warm-up after a restart (fast growth, then plateau) and a GC saw must stay silent.
+  - name: memory warm-up and saw
+    interval: 15s
+    input_series:
+      - series: 'container_uptime_seconds{container_name="grafana"}'
+        values: '0+15x80'
+      - series: 'container_uptime_seconds{container_name="ad"}'
+        values: '3600+15x80'
+      - series: 'container_memory_usage_total_bytes{container_name="grafana"}'
+        values: '50000000+20000000x8 210000000x80'
+      - series: 'container_memory_usage_total_bytes{container_name="ad"}'
+        values: '200000000 205000000 210000000 215000000 220000000 200000000 205000000 210000000 215000000 220000000 200000000 205000000 210000000 215000000 220000000 200000000 205000000 210000000 215000000 220000000 200000000 205000000 210000000 215000000 220000000 200000000 205000000 210000000 215000000 220000000 200000000 205000000 210000000 215000000 220000000 200000000 205000000 210000000 215000000 220000000'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: MemoryLeak
+        exp_alerts: []
+      - eval_time: 9m
+        alertname: MemoryLeak
+        exp_alerts: []

@@ -9,23 +9,24 @@ groups:
     rules:
       - alert: ServiceHighErrorRate
         expr: |
-          service:error_ratio:rate2m > 0.05
-          and on (service_name) service:requests:rate2m > 0.05
+          (service:error_ratio:rate2m > 0.05 and on (service_name) service:requests:rate2m > 0.05)
+          or
+          (service:error_ratio:rate5m > 0.03 and on (service_name) service:errors:increase5m >= 3)
         for: 1m
         labels:
           severity: critical
           service: '{{ $labels.service_name }}'
         annotations:
           summary: '{{ $labels.service_name }}: {{ $value | humanizePercentage }} запросов с ошибкой'
-          description: Доля ошибок входящих запросов выше 5 % дольше минуты.
+          description: Доля ошибок входящих запросов выше 5 % за 2 минуты (или выше 3 % и не меньше 3 ошибок за 5 минут).
           runbook_url: https://github.com/Protemir/observability-platform-demo/blob/main/runbooks/ServiceHighErrorRate.md
           dashboard: /d/platform-service/service?var-service={{ $labels.service_name }}
 
       - alert: OperationErrors
         expr: |
-          operation:error_ratio:rate2m > 0.05
-          and on (service_name, span_name) operation:requests:rate2m > 0.02
-        for: 2m
+          operation:error_ratio:rate5m > 0.05
+          and on (service_name, span_name) operation:errors:increase5m >= 3
+        for: 1m
         labels:
           severity: warning
           service: '{{ $labels.service_name }}'
@@ -37,8 +38,9 @@ groups:
 
       - alert: DependencyCallErrors
         expr: |
-          dependency:error_ratio:rate2m > 0.20
-          and on (service_name, span_name) dependency:requests:rate2m > 0.02
+          (dependency:error_ratio:rate2m > 0.20 and on (service_name, span_name) dependency:requests:rate2m > 0.02)
+          or
+          (dependency:error_ratio:rate5m > 0.20 and on (service_name, span_name) dependency:errors:increase5m >= 3)
         for: 1m
         labels:
           severity: critical
@@ -67,46 +69,54 @@ groups:
           dashboard: /d/platform-service/service?var-service={{ $labels.service_name }}
 
       - alert: ServiceDown
+        # No spans for 2 minutes AND no running container. A service that simply got no
+        # work (email when no orders are placed) is not "down"; a hung but running
+        # service shows up in its callers' DependencyCallErrors instead.
         expr: |
-          (sum by (service_name) (rate(traces_span_metrics_calls_total[15m] offset 5m)) > 0)
+          (
+            (sum by (service_name) (rate(traces_span_metrics_calls_total[15m] offset 5m)) > 0)
+            unless on (service_name)
+            (sum by (service_name) (rate(traces_span_metrics_calls_total[2m])) > 0)
+          )
           unless on (service_name)
-          (sum by (service_name) (rate(traces_span_metrics_calls_total[2m])) > 0)
+          label_replace(service:container_uptime_seconds, "service_name", "$1", "service", "(.*)")
         for: 1m
         labels:
           severity: critical
           service: '{{ $labels.service_name }}'
         annotations:
           summary: '{{ $labels.service_name }} перестал обрабатывать запросы'
-          description: 15 минут назад трафик был, последние 2 минуты нет ни одного спана.
+          description: Трафик был, а последние 2 минуты нет ни одного спана и контейнер не запущен.
           runbook_url: https://github.com/Protemir/observability-platform-demo/blob/main/runbooks/ServiceDown.md
           dashboard: /d/platform-overview/overview
 
   - name: platform.resources
     rules:
       - alert: MemoryLeak
+        # A leak grows without pauses; normal memory is a saw (GC) or a plateau after warm-up.
+        # Fires when memory went up in every 2-minute window of the last 4 minutes, the
+        # total growth is noticeable and the container is not just warming up.
         expr: |
-          (
-            predict_linear(service:container_memory_bytes[10m], 3600) > service:container_memory_limit_bytes
-            and deriv(service:container_memory_bytes[10m]) > 100 * 1024
-          )
-          or
-          (
-            deriv(service:container_memory_bytes[5m]) > 512 * 1024
-            and service:container_memory_bytes > 2 * service:container_memory_bytes:min1h
-          )
-        for: 2m
+          min_over_time(deriv(service:container_memory_bytes[2m])[4m:30s]) > 20 * 1024
+          and delta(service:container_memory_bytes[4m]) > 10 * 1024 * 1024
+          and on (service) service:container_uptime_seconds > 600   # not a warm-up after (re)start
+        for: 1m
         labels:
           severity: warning
           service: '{{ $labels.service }}'
         annotations:
           summary: '{{ $labels.service }}: память растёт без остановки'
-          description: По текущему наклону контейнер упрётся в лимит памяти в течение часа, или память уже удвоилась от минимума за час.
+          description: Память росла в каждом 2-минутном окне последних 4 минут, прирост больше 10 МБ. Норма — пила (GC) или плато после прогрева.
           runbook_url: https://github.com/Protemir/observability-platform-demo/blob/main/runbooks/MemoryLeak.md
           dashboard: /d/platform-service/service?var-service={{ $labels.service }}
 
       - alert: MemoryNearLimit
-        expr: service:container_memory_bytes / service:container_memory_limit_bytes > 0.9
-        for: 2m
+        # Near the limit AND still growing: a process that simply sits high (flagd-ui at
+        # 93-96 % for hours) is its normal state, not an incident.
+        expr: |
+          service:container_memory_bytes / service:container_memory_limit_bytes > 0.95
+          and on (service) delta(service:container_memory_bytes[15m]) > 5 * 1024 * 1024
+        for: 3m
         labels:
           severity: critical
           service: '{{ $labels.service }}'
@@ -181,7 +191,7 @@ groups:
           service: checkout
         annotations:
           summary: 'Оформление заказа: бюджет ошибок сгорает в 14 раз быстрее нормы'
-          description: 'Ошибок за час {{ $value | humanizePercentage }} при SLO 99 %. Бюджет на 30 дней уйдёт за 2 дня.'
+          description: 'Ошибок за час больше 14,4 % при SLO 99 %: бюджет на 30 дней уйдёт за 2 дня.'
           runbook_url: https://github.com/Protemir/observability-platform-demo/blob/main/runbooks/CheckoutSloFastBurn.md
           dashboard: /d/platform-slo/slo-checkout
       - alert: CheckoutSloSlowBurn
@@ -193,7 +203,7 @@ groups:
           service: checkout
         annotations:
           summary: 'Оформление заказа: бюджет ошибок сгорает в 6 раз быстрее нормы'
-          description: 'Ошибок за 6 часов {{ $value | humanizePercentage }} при SLO 99 %.'
+          description: 'Ошибок за 6 часов больше 6 % при SLO 99 %: бюджет на 30 дней уйдёт за 5 дней.'
           runbook_url: https://github.com/Protemir/observability-platform-demo/blob/main/runbooks/CheckoutSloSlowBurn.md
           dashboard: /d/platform-slo/slo-checkout
       - alert: CheckoutLatencySloBurn

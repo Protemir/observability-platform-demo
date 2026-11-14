@@ -6,57 +6,86 @@ groups:
     interval: 15s
     rules:
       # --- inbound traffic of a service (server + consumer spans) ---
+      # Long-lived gRPC streams (flagd EventStream) are excluded: their duration is the
+      # connection lifetime and they end with an error on every client restart.
+      # Scrapes of /metrics and health checks are not user traffic either.
       - record: service:requests:rate2m
         expr: |
           sum by (service_name) (
-            rate(traces_span_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[2m])
+            rate(traces_span_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER", span_name!~".*EventStream|GET /metrics|GET /health.*"}[2m])
           )
       - record: service:errors:rate2m
         expr: |
           sum by (service_name) (
-            rate(traces_span_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER", status_code="STATUS_CODE_ERROR"}[2m])
+            rate(traces_span_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER", span_name!~".*EventStream|GET /metrics|GET /health.*", status_code="STATUS_CODE_ERROR"}[2m])
           )
+          or 0 * service:requests:rate2m
       - record: service:error_ratio:rate2m
         expr: service:errors:rate2m / service:requests:rate2m
       - record: service:latency_ms:p95_2m
         expr: |
           histogram_quantile(0.95, sum by (service_name, le) (
-            rate(traces_span_metrics_duration_milliseconds_bucket{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[2m])
+            rate(traces_span_metrics_duration_milliseconds_bucket{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER", span_name!~".*EventStream|GET /metrics|GET /health.*"}[2m])
           ))
       # Per operation: catches a failure that hits one endpoint of a busy service
       # (productCatalogFailure fails a single product, imageSlowLoad one route).
       - record: operation:requests:rate2m
         expr: |
           sum by (service_name, span_name) (
-            rate(traces_span_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[2m])
+            rate(traces_span_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER", span_name!~".*EventStream|GET /metrics|GET /health.*"}[2m])
           )
       - record: operation:error_ratio:rate2m
         expr: |
           sum by (service_name, span_name) (
-            rate(traces_span_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER", status_code="STATUS_CODE_ERROR"}[2m])
+            rate(traces_span_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER", span_name!~".*EventStream|GET /metrics|GET /health.*", status_code="STATUS_CODE_ERROR"}[2m])
           ) / operation:requests:rate2m
       - record: operation:latency_ms:p95_2m
         expr: |
           histogram_quantile(0.95, sum by (service_name, span_name, le) (
-            rate(traces_span_metrics_duration_milliseconds_bucket{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[2m])
+            rate(traces_span_metrics_duration_milliseconds_bucket{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER", span_name!~".*EventStream|GET /metrics|GET /health.*"}[2m])
           ))
       # Same operation one hour earlier: latency alerts compare against the service's own norm.
       - record: operation:latency_ms:p95_1h
         expr: |
           histogram_quantile(0.95, sum by (service_name, span_name, le) (
-            rate(traces_span_metrics_duration_milliseconds_bucket{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[1h])
+            rate(traces_span_metrics_duration_milliseconds_bucket{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER", span_name!~".*EventStream|GET /metrics|GET /health.*"}[1h])
           ))
       # --- outbound calls: a dead dependency shows up here even if it emits nothing itself ---
+      # The load generator is a synthetic client: its failures already show up as server errors.
       - record: dependency:requests:rate2m
         expr: |
           sum by (service_name, span_name) (
-            rate(traces_span_metrics_calls_total{span_kind="SPAN_KIND_CLIENT"}[2m])
+            rate(traces_span_metrics_calls_total{span_kind="SPAN_KIND_CLIENT", service_name!="load-generator"}[2m])
           )
       - record: dependency:error_ratio:rate2m
         expr: |
           sum by (service_name, span_name) (
-            rate(traces_span_metrics_calls_total{span_kind="SPAN_KIND_CLIENT", status_code="STATUS_CODE_ERROR"}[2m])
+            rate(traces_span_metrics_calls_total{span_kind="SPAN_KIND_CLIENT", service_name!="load-generator", status_code="STATUS_CODE_ERROR"}[2m])
           ) / dependency:requests:rate2m
+
+      # 5-minute windows with an absolute error count: rare operations (EmptyCart is called
+      # ~1.5 times a minute) get a stable ratio, and a single stray error is not an alert.
+      - record: service:errors:increase5m
+        expr: |
+          sum by (service_name) (increase(traces_span_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER", span_name!~".*EventStream|GET /metrics|GET /health.*", status_code="STATUS_CODE_ERROR"}[5m]))
+      - record: service:error_ratio:rate5m
+        expr: |
+          sum by (service_name) (rate(traces_span_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER", span_name!~".*EventStream|GET /metrics|GET /health.*", status_code="STATUS_CODE_ERROR"}[5m]))
+          / sum by (service_name) (rate(traces_span_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER", span_name!~".*EventStream|GET /metrics|GET /health.*"}[5m]))
+      - record: operation:errors:increase5m
+        expr: |
+          sum by (service_name, span_name) (increase(traces_span_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER", span_name!~".*EventStream|GET /metrics|GET /health.*", status_code="STATUS_CODE_ERROR"}[5m]))
+      - record: operation:error_ratio:rate5m
+        expr: |
+          sum by (service_name, span_name) (rate(traces_span_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER", span_name!~".*EventStream|GET /metrics|GET /health.*", status_code="STATUS_CODE_ERROR"}[5m]))
+          / sum by (service_name, span_name) (rate(traces_span_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER", span_name!~".*EventStream|GET /metrics|GET /health.*"}[5m]))
+      - record: dependency:errors:increase5m
+        expr: |
+          sum by (service_name, span_name) (increase(traces_span_metrics_calls_total{span_kind="SPAN_KIND_CLIENT", service_name!="load-generator", status_code="STATUS_CODE_ERROR"}[5m]))
+      - record: dependency:error_ratio:rate5m
+        expr: |
+          sum by (service_name, span_name) (rate(traces_span_metrics_calls_total{span_kind="SPAN_KIND_CLIENT", service_name!="load-generator", status_code="STATUS_CODE_ERROR"}[5m]))
+          / sum by (service_name, span_name) (rate(traces_span_metrics_calls_total{span_kind="SPAN_KIND_CLIENT", service_name!="load-generator"}[5m]))
 
   # SLO: checkout path, measured where the order is placed (checkout PlaceOrder).
   # Availability target 99 %, latency target 95 % of orders under 2 s, 30 day window.
@@ -65,22 +94,22 @@ groups:
     rules:
       - record: slo:checkout_errors:ratio_rate5m
         expr: |
-          sum(rate(traces_span_metrics_calls_total{service_name="checkout", span_name=~".*PlaceOrder", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}[5m]))
+          (sum(rate(traces_span_metrics_calls_total{service_name="checkout", span_name=~".*PlaceOrder", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}[5m])) or vector(0))
           /
           sum(rate(traces_span_metrics_calls_total{service_name="checkout", span_name=~".*PlaceOrder", span_kind="SPAN_KIND_SERVER"}[5m]))
       - record: slo:checkout_errors:ratio_rate30m
         expr: |
-          sum(rate(traces_span_metrics_calls_total{service_name="checkout", span_name=~".*PlaceOrder", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}[30m]))
+          (sum(rate(traces_span_metrics_calls_total{service_name="checkout", span_name=~".*PlaceOrder", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}[30m])) or vector(0))
           /
           sum(rate(traces_span_metrics_calls_total{service_name="checkout", span_name=~".*PlaceOrder", span_kind="SPAN_KIND_SERVER"}[30m]))
       - record: slo:checkout_errors:ratio_rate1h
         expr: |
-          sum(rate(traces_span_metrics_calls_total{service_name="checkout", span_name=~".*PlaceOrder", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}[1h]))
+          (sum(rate(traces_span_metrics_calls_total{service_name="checkout", span_name=~".*PlaceOrder", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}[1h])) or vector(0))
           /
           sum(rate(traces_span_metrics_calls_total{service_name="checkout", span_name=~".*PlaceOrder", span_kind="SPAN_KIND_SERVER"}[1h]))
       - record: slo:checkout_errors:ratio_rate6h
         expr: |
-          sum(rate(traces_span_metrics_calls_total{service_name="checkout", span_name=~".*PlaceOrder", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}[6h]))
+          (sum(rate(traces_span_metrics_calls_total{service_name="checkout", span_name=~".*PlaceOrder", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}[6h])) or vector(0))
           /
           sum(rate(traces_span_metrics_calls_total{service_name="checkout", span_name=~".*PlaceOrder", span_kind="SPAN_KIND_SERVER"}[6h]))
       - record: slo:checkout_slow:ratio_rate5m
@@ -102,7 +131,7 @@ groups:
         expr: |
           1 - (
             (
-              sum(increase(traces_span_metrics_calls_total{service_name="checkout", span_name=~".*PlaceOrder", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}[7d]))
+              (sum(increase(traces_span_metrics_calls_total{service_name="checkout", span_name=~".*PlaceOrder", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}[7d])) or vector(0))
               /
               sum(increase(traces_span_metrics_calls_total{service_name="checkout", span_name=~".*PlaceOrder", span_kind="SPAN_KIND_SERVER"}[7d]))
             ) / 0.01

@@ -21,6 +21,8 @@ mkdir -p "$ROOT/local/secrets"
 export PLATFORM_DIR="$ROOT"
 # Demo images pinned to the release the compose files come from (its .env says "latest").
 export DEMO_VERSION="${DEMO_VERSION:-$DEMO_REF}"
+# Same load as the Kubernetes values: with 5 users a 10 % failure (adFailure) is 1 error in minutes.
+export LOCUST_USERS="${LOCUST_USERS:-10}"
 FILES=(-f "$DEMO_DIR/compose.yaml")
 [ "${FULL:-0}" = "1" ] && FILES+=(-f "$DEMO_DIR/compose.full.yaml")
 FILES+=(-f "$ROOT/local/compose.platform.yaml")

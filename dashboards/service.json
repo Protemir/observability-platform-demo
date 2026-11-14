@@ -235,7 +235,7 @@
       "links": [],
       "targets": [
         {
-          "expr": "histogram_quantile(0.5, sum by (le) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name=\"$service\", span_kind=~\"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER\"}[2m])))",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name=\"$service\", span_kind=~\"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER\", span_name!~\".*EventStream|GET /metrics|GET /health.*\"}[2m])))",
           "instant": false,
           "range": true,
           "refId": "A"
@@ -292,7 +292,7 @@
       "links": [],
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name=\"$service\", span_kind=~\"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER\"}[2m])))",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name=\"$service\", span_kind=~\"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER\", span_name!~\".*EventStream|GET /metrics|GET /health.*\"}[2m])))",
           "instant": false,
           "range": true,
           "refId": "A"
@@ -357,7 +357,7 @@
       "links": [],
       "targets": [
         {
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name=\"$service\", span_kind=~\"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER\"}[2m])))",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name=\"$service\", span_kind=~\"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER\", span_name!~\".*EventStream|GET /metrics|GET /health.*\"}[2m])))",
           "instant": false,
           "range": true,
           "refId": "A"
@@ -486,7 +486,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (span_name) (rate(traces_span_metrics_calls_total{service_name=\"$service\", span_kind=~\"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER\"}[1m]))",
+          "expr": "sum by (span_name) (rate(traces_span_metrics_calls_total{service_name=\"$service\", span_kind=~\"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER\", span_name!~\".*EventStream|GET /metrics|GET /health.*\"}[1m]))",
           "legendFormat": "{{span_name}}",
           "refId": "A"
         }
@@ -547,7 +547,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (span_name) (rate(traces_span_metrics_calls_total{service_name=\"$service\", span_kind=~\"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER\", status_code=\"STATUS_CODE_ERROR\"}[1m]))",
+          "expr": "sum by (span_name) (rate(traces_span_metrics_calls_total{service_name=\"$service\", span_kind=~\"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER\", span_name!~\".*EventStream|GET /metrics|GET /health.*\", status_code=\"STATUS_CODE_ERROR\"}[1m]))",
           "legendFormat": "{{span_name}}",
           "refId": "A"
         }
@@ -613,19 +613,19 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.5, sum by (le) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name=\"$service\", span_kind=~\"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER\"}[1m])))",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name=\"$service\", span_kind=~\"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER\", span_name!~\".*EventStream|GET /metrics|GET /health.*\"}[1m])))",
           "legendFormat": "p50",
           "exemplar": true,
           "refId": "A"
         },
         {
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name=\"$service\", span_kind=~\"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER\"}[1m])))",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name=\"$service\", span_kind=~\"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER\", span_name!~\".*EventStream|GET /metrics|GET /health.*\"}[1m])))",
           "legendFormat": "p95",
           "exemplar": true,
           "refId": "B"
         },
         {
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name=\"$service\", span_kind=~\"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER\"}[1m])))",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name=\"$service\", span_kind=~\"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER\", span_name!~\".*EventStream|GET /metrics|GET /health.*\"}[1m])))",
           "legendFormat": "p99",
           "exemplar": true,
           "refId": "C"

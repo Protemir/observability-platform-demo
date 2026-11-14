@@ -9,7 +9,7 @@ const PROM = { type: 'prometheus', uid: 'prometheus' };
 const TEMPO = { type: 'tempo', uid: 'tempo' };
 const LOKI = { type: 'loki', uid: 'loki' };
 
-const SERVER = 'span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"';
+const SERVER = 'span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER", span_name!~".*EventStream|GET /metrics|GET /health.*"';
 const ERR = 'status_code="STATUS_CODE_ERROR"';
 const CALLS = 'traces_span_metrics_calls_total';
 const DUR = 'traces_span_metrics_duration_milliseconds_bucket';
@@ -102,7 +102,7 @@ const overview = dashboard({
     stat('Ошибок, всего', `sum(service:errors:rate2m) / sum(service:requests:rate2m)`, { x: 8, y: 0, unit: 'percentunit', decimals: 2, th: [[null, 'green'], [0.01, 'orange'], [0.05, 'red']] }),
     stat('Заказы: доступность, 1 ч', `1 - slo:checkout_errors:ratio_rate1h`, { x: 12, y: 0, unit: 'percentunit', decimals: 2, th: [[null, 'red'], [0.99, 'green']], links: [{ title: 'SLO checkout', url: '/d/platform-slo/slo-checkout?${__url_time_range}' }] }),
     stat('Активных оповещений', `count(ALERTS{alertstate="firing", alertname!="Watchdog"}) or vector(0)`, { x: 16, y: 0, th: [[null, 'green'], [1, 'red']] }),
-    stat('Бюджет ошибок, 7 дней', `slo:checkout_error_budget:remaining_7d`, { x: 20, y: 0, unit: 'percentunit', decimals: 1, th: [[null, 'red'], [0.25, 'orange'], [0.5, 'green']] }),
+    stat('Бюджет ошибок, 7 дней', `clamp_min(slo:checkout_error_budget:remaining_7d, 0)`, { x: 20, y: 0, unit: 'percentunit', decimals: 1, th: [[null, 'red'], [0.25, 'orange'], [0.5, 'green']] }),
     {
       type: 'nodeGraph', title: 'Карта сервисов (по трассам)', datasource: TEMPO, gridPos: { x: 0, y: 4, w: 14, h: 16 },
       description: 'Узлы — сервисы, рёбра — вызовы. Красная доля круга — ошибки. Клик по узлу: трассы, метрики.',
@@ -125,8 +125,8 @@ const overview = dashboard({
         { expr: 'service:latency_ms:p95_2m', instant: true, format: 'table' },
       ]),
       transformations: [
-        { id: 'merge', options: {} },
-        { id: 'organize', options: { excludeByName: { Time: true }, renameByName: { service_name: 'service_name', 'Value #A': 'RPS', 'Value #B': 'Ошибки', 'Value #C': 'p95, мс' } } },
+        { id: 'joinByField', options: { byField: 'service_name', mode: 'outer' } },
+        { id: 'organize', options: { excludeByName: { Time: true, 'Time 1': true, 'Time 2': true, 'Time 3': true, __name__: true, '__name__ 1': true, '__name__ 2': true, '__name__ 3': true }, renameByName: { service_name: 'service_name', 'Value #A': 'RPS', 'Value #B': 'Ошибки', 'Value #C': 'p95, мс' } } },
         { id: 'sortBy', options: { sort: [{ field: 'Ошибки', desc: true }] } },
       ],
       fieldConfig: {
@@ -247,7 +247,7 @@ const slo = dashboard({
   panels: [
     stat('Доступность, 1 ч', '1 - slo:checkout_errors:ratio_rate1h', { x: 0, y: 0, unit: 'percentunit', decimals: 2, th: [[null, 'red'], [0.99, 'green']] }),
     stat('Доступность, 7 дней', '1 - (1 - slo:checkout_error_budget:remaining_7d) * 0.01', { x: 4, y: 0, unit: 'percentunit', decimals: 3, th: [[null, 'red'], [0.99, 'green']] }),
-    stat('Бюджет ошибок остался, 7 дней', 'slo:checkout_error_budget:remaining_7d', { x: 8, y: 0, unit: 'percentunit', decimals: 1, th: [[null, 'red'], [0.25, 'orange'], [0.5, 'green']] }),
+    stat('Бюджет ошибок остался, 7 дней', 'clamp_min(slo:checkout_error_budget:remaining_7d, 0)', { x: 8, y: 0, unit: 'percentunit', decimals: 1, th: [[null, 'red'], [0.25, 'orange'], [0.5, 'green']] }),
     stat('Скорость расхода, 1 ч', 'slo:checkout_errors:ratio_rate1h / 0.01', { x: 12, y: 0, unit: 'x', decimals: 1, th: [[null, 'green'], [1, 'orange'], [6, 'red']], desc: '1x — бюджет уйдёт ровно за период SLO; 14.4x — за 2 дня.' }),
     stat('Заказов быстрее 2 с, 1 ч', '1 - slo:checkout_slow:ratio_rate1h', { x: 16, y: 0, unit: 'percentunit', decimals: 1, th: [[null, 'red'], [0.95, 'green']] }),
     stat('Заказов в минуту', `sum(rate(${CALLS}{service_name="checkout", span_name=~".*PlaceOrder", span_kind="SPAN_KIND_SERVER"}[5m])) * 60`, { x: 20, y: 0, decimals: 1 }),
@@ -258,7 +258,7 @@ const slo = dashboard({
     ], { x: 0, y: 4, w: 24, h: 9, unit: 'x', th: [[null, 'green'], [6, 'orange'], [14.4, 'red']], desc: 'Пунктир: 6x — медленное сгорание (warning), 14.4x — быстрое (critical).', links: [exploreTraces('{ resource.service.name = "checkout" && name =~ ".*PlaceOrder" && status = error }', 'Неудачные заказы за этот период')] }),
     ts('Доля неудачных заказов', [{ expr: 'slo:checkout_errors:ratio_rate5m', legendFormat: 'ошибки, 5 мин' }], { x: 0, y: 13, unit: 'percentunit', th: [[null, 'green'], [0.01, 'red']] }),
     ts('Доля заказов дольше 2 с', [{ expr: 'slo:checkout_slow:ratio_rate5m', legendFormat: 'медленные, 5 мин' }], { x: 12, y: 13, unit: 'percentunit', th: [[null, 'green'], [0.05, 'red']] }),
-    ts('Остаток бюджета ошибок (7 дней)', [{ expr: 'slo:checkout_error_budget:remaining_7d', legendFormat: 'остаток' }], { x: 0, y: 21, w: 24, unit: 'percentunit', min: 0, max: 1 }),
+    ts('Остаток бюджета ошибок (7 дней)', [{ expr: 'clamp_min(slo:checkout_error_budget:remaining_7d, 0)', legendFormat: 'остаток' }], { x: 0, y: 21, w: 24, unit: 'percentunit', min: 0, max: 1 }),
   ],
 });
 
